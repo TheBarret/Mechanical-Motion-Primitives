@@ -1,2 +1,41 @@
 # Mechanical-Motion-Primitives
 Mechanical implementation to mathematical mappings
+
+
+Almost complete, needs some work.
+```
+mm-test.py::test_spur_gear_basic PASSED                                                                                                [  2%]
+mm-test.py::test_spur_gear_modular PASSED                                                                                              [  5%]
+mm-test.py::test_rack_and_pinion PASSED                                                                                                [  8%]
+mm-test.py::test_wedge PASSED                                                                                                          [ 11%]
+mm-test.py::test_pantograph PASSED                                                                                                     [ 14%]
+mm-test.py::test_scotch_yoke PASSED                                                                                                    [ 17%]
+mm-test.py::test_crank_slider PASSED                                                                                                   [ 20%]
+mm-test.py::test_hookes_joint PASSED                                                                                                   [ 23%]
+mm-test.py::test_planetary_gear PASSED                                                                                                 [ 26%]
+mm-test.py::test_differential PASSED                                                                                                   [ 29%]
+mm-test.py::test_ratchet PASSED                                                                                                        [ 32%]
+mm-test.py::test_detent PASSED                                                                                                         [ 35%]
+mm-test.py::test_escapement PASSED                                                                                                     [ 38%]
+mm-test.py::test_geneva_basic FAILED                                                                                                   [ 41%]
+mm-test.py::test_worm_gear_irreversible PASSED                                                                                         [ 44%]
+mm-test.py::test_worm_gear_reversible PASSED                                                                                           [ 47%]
+mm-test.py::test_harmonic_drive PASSED                                                                                                 [ 50%]
+mm-test.py::test_differential_screw PASSED                                                                                             [ 52%]
+mm-test.py::test_cvt PASSED                                                                                                            [ 55%]
+mm-test.py::test_trochoidal_position PASSED                                                                                            [ 58%]
+mm-test.py::test_spirograph_closure PASSED                                                                                             [ 61%]
+mm-test.py::test_vernier PASSED                                                                                                        [ 64%]
+mm-test.py::test_mechanical_chain FAILED                                                                                               [ 67%]
+mm-test.py::test_chain_with_oneway PASSED                                                                                              [ 70%]
+mm-test.py::test_scotch_yoke_out_of_range PASSED                                                                                       [ 73%]
+mm-test.py::test_planetary_invalid_mode PASSED                                                                                         [ 76%]
+mm-test.py::test_toroidal_cvt_near_singularity PASSED                                                                                  [ 79%]
+mm-test.py::test_compound_gear_train FAILED                                                                                            [ 82%]
+mm-test.py::test_four_bar_linkage FAILED                                                                                               [ 85%]
+mm-test.py::test_eccentric_cam_numerical FAILED                                                                                        [ 88%]
+mm-test.py::test_toroidal_cvt_basic FAILED                                                                                             [ 91%]
+mm-test.py::test_escapement_force_threshold PASSED                                                                                     [ 94%]
+mm-test.py::test_mechanical_chain_1d PASSED                                                                                            [ 97%]
+mm-test.py::test_mechanical_chain_2d FAILED                                                                                            [100%]
+```
