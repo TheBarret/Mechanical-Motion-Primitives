@@ -3,7 +3,7 @@ Mechanical implementation to mathematical mappings
 
 
 Almost complete, needs some work.
-```py
+```
 mm-test.py::test_spur_gear_basic PASSED                                                                                                [  2%]
 mm-test.py::test_spur_gear_modular PASSED                                                                                              [  5%]
 mm-test.py::test_rack_and_pinion PASSED                                                                                                [  8%]
@@ -35,10 +35,12 @@ mm-test.py::test_compound_gear_train FAILED                                     
 mm-test.py::test_four_bar_linkage FAILED                                                                                               [ 85%]
 mm-test.py::test_eccentric_cam_numerical FAILED                                                                                        [ 88%]
 mm-test.py::test_toroidal_cvt_basic FAILED                                                                                             [ 91%]
+mm-test.py::test_escapement_force_threshold PASSED                                                                                     [ 94%]
+mm-test.py::test_mechanical_chain_1d PASSED                                                                                            [ 97%]
+mm-test.py::test_mechanical_chain_2d FAILED                                                                                            [100%]
+```
 
-================================================================= FAILURES ==================================================================
-_____________________________________________________________ test_geneva_basic _____________________________________________________________
-
+```py
     def test_geneva_basic():
         geneva = GenevaDrive(num_slots=4)
         # First engagement might behave differently
@@ -149,7 +151,4 @@ FAILED mm-test.py::test_eccentric_cam_numerical - NameError: name 'EccentricCam'
 FAILED mm-test.py::test_toroidal_cvt_basic - assert 99.99999999999999 == 100
 FAILED mm-test.py::test_mechanical_chain_2d - NameError: name 'OldhamCoupling' is not defined
 ======================================================= 7 failed, 27 passed in 0.79s ========================================================
-mm-test.py::test_escapement_force_threshold PASSED                                                                                     [ 94%]
-mm-test.py::test_mechanical_chain_1d PASSED                                                                                            [ 97%]
-mm-test.py::test_mechanical_chain_2d FAILED                                                                                            [100%]
 ```
