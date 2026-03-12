@@ -204,24 +204,57 @@ class TestEccentricCam:
         
         # Inverse should recover theta
         assert c.inverse(y) == pytest.approx(theta, rel=1e-6)
-
+    
     def test_inverse_with_different_guess(self):
-        """Inverse should converge from different guesses"""
+        """
+        EccentricCam forward is symmetric: forward(θ) == forward(2π - θ)
+        Branch determines which of the two solutions is returned.
+        We verify the result is in the correct region and reproduces y.
+        """
         c = EccentricCam(eccentricity=1.0, follower_radius=5.0)
-        theta = 2.0
+
+        # Principal branch — solutions in [0, π]
+        c.branch = 'principal'
+        theta = 0.8
         y = c.forward(theta)
-        
-        # Try different guesses - should still converge to same theta
-        for guess in [0.1, 1.0, 3.0]:
-            c.theta_guess = guess
-            assert c.inverse(y) == pytest.approx(theta, rel=1e-6)
+        result = c.inverse(y)
+        assert 0 <= result <= math.pi, f"Result {result} not in principal branch [0, π]"
+        assert c.forward(result) == pytest.approx(y, rel=1e-6)
+
+        # Supplementary branch — solutions in [π, 2π]
+        c.branch = 'supplementary'
+        theta = 4.0  # in [π, 2π]
+        y = c.forward(theta)
+        result = c.inverse(y)
+        assert math.pi <= result <= 2 * math.pi, f"Result {result} not in supplementary branch [π, 2π]"
+        assert c.forward(result) == pytest.approx(y, rel=1e-6)
+
 
     def test_inverse_out_of_domain_raises(self):
         """Inverse fails for y outside [r-e, r+e]"""
         c = EccentricCam(eccentricity=1.0, follower_radius=5.0)
         
-        with pytest.raises(ValueError, match="failed to converge"):
-            c.inverse(10.0)  # > max
+        # Should raise domain error, not convergence error
+        with pytest.raises(ValueError, match="outside domain"):
+            c.inverse(10.0)  # > max (6.0)
+        
+        with pytest.raises(ValueError, match="outside domain"):
+            c.inverse(2.0)  # < min (4.0)
+
+
+    def test_inverse_at_extrema(self):
+        """Inverse at min/max displacement should return exact angles"""
+        c = EccentricCam(eccentricity=1.0, follower_radius=5.0)
+        
+        # Maximum displacement at θ=0
+        y_max = c.domain.max  # 6.0
+        result = c.inverse(y_max)
+        assert result == pytest.approx(0.0, abs=1e-9)
+        
+        # Minimum displacement at θ=π
+        y_min = c.domain.min  # 4.0
+        result = c.inverse(y_min)
+        assert result == pytest.approx(math.pi, abs=1e-9)
 
     def test_period(self):
         """Period should be 2π"""
@@ -251,8 +284,8 @@ class TestCrankSlider:
         assert cs.is_analytically_invertible is False
         assert cs.domain.input_unit == Dimension.ANGLE
         assert cs.domain.output_unit == Dimension.LENGTH
-        assert cs.domain.min == 3.0  # L - r
-        assert cs.domain.max == 5.0  # L + r
+        assert cs.domain.min == 3.0
+        assert cs.domain.max == 5.0
 
     def test_crank_length_zero_raises(self):
         """Crank length must be positive"""
@@ -267,53 +300,120 @@ class TestCrankSlider:
     def test_forward_at_key_points(self):
         """Forward: crank angle -> slider position"""
         cs = CrankSlider(crank_length=1.0, rod_length=4.0)
-        
-        # θ = 0: r*1 + sqrt(16 - 0) = 1 + 4 = 5
+
+        # θ=0: r*1 + sqrt(16-0) = 1+4 = 5
         assert cs.forward(0.0) == pytest.approx(5.0)
-        
-        # θ = π/2: r*0 + sqrt(16 - 1) = 0 + sqrt(15) ≈ 3.87298
+
+        # θ=π/2: r*0 + sqrt(16-1) = sqrt(15) ≈ 3.87298
         assert cs.forward(math.pi/2) == pytest.approx(3.87298, rel=1e-5)
-        
-        # θ = π: r*(-1) + sqrt(16 - 0) = -1 + 4 = 3
+
+        # θ=π: r*(-1) + sqrt(16-0) = -1+4 = 3
         assert cs.forward(math.pi) == pytest.approx(3.0)
-        
-        # θ = 3π/2: r*0 + sqrt(16 - 1) = 0 + sqrt(15) ≈ 3.87298
+
+        # θ=3π/2: r*0 + sqrt(16-1) = sqrt(15) ≈ 3.87298
         assert cs.forward(3*math.pi/2) == pytest.approx(3.87298, rel=1e-5)
 
     def test_derivative(self):
         """Analytical derivative should match numerical approximation"""
         cs = CrankSlider(crank_length=1.0, rod_length=4.0)
         theta = 1.0
-        
+
         d_analytical = cs._derivative(theta)
         h = 1e-8
         d_numerical = (cs.forward(theta + h) - cs.forward(theta)) / h
-        
+
         assert d_analytical == pytest.approx(d_numerical, rel=1e-5)
 
-    def test_inverse_converges(self):
-        """Inverse should find correct angle"""
-        cs = CrankSlider(crank_length=1.0, rod_length=4.0, theta_guess=0.5)
-        
-        theta = 1.2
+    def test_inverse_principal_branch(self):
+        """Inverse returns solution in [0, π] for principal branch"""
+        cs = CrankSlider(crank_length=1.0, rod_length=4.0, branch='principal')
+        theta = 0.8
         y = cs.forward(theta)
-        assert cs.inverse(y) == pytest.approx(theta, rel=1e-6)
+        result = cs.inverse(y)
+
+        assert 0 <= result <= math.pi
+        assert cs.forward(result) == pytest.approx(y, rel=1e-6)
+
+    def test_inverse_supplementary_branch(self):
+        """Inverse returns solution in [π, 2π] for supplementary branch"""
+        cs = CrankSlider(crank_length=1.0, rod_length=4.0, branch='supplementary')
+        theta = 4.0  # In [π, 2π]
+        y = cs.forward(theta)
+        result = cs.inverse(y)
+
+        assert math.pi <= result <= 2 * math.pi
+        assert cs.forward(result) == pytest.approx(y, rel=1e-6)
+
+    def test_inverse_at_extrema(self):
+        """Inverse at min/max displacement returns exact angles"""
+        cs = CrankSlider(crank_length=1.0, rod_length=4.0)
+
+        # Maximum displacement at θ=0
+        result = cs.inverse(cs.domain.max)
+        assert result == pytest.approx(0.0, abs=1e-9)
+
+        # Minimum displacement at θ=π
+        result = cs.inverse(cs.domain.min)
+        assert result == pytest.approx(math.pi, abs=1e-9)
+
+    def test_inverse_out_of_domain_raises(self):
+        """Inverse fails for y outside [L-r, L+r]"""
+        cs = CrankSlider(crank_length=1.0, rod_length=4.0)
+
+        with pytest.raises(ValueError, match="outside domain"):
+            cs.inverse(10.0)  # above max
+
+        with pytest.raises(ValueError, match="outside domain"):
+            cs.inverse(1.0)   # below min
+
+    def test_round_trip_all_branches(self):
+        """
+        Encode/decode round-trip for both branches.
+        Correctness criterion: forward(inverse(y)) == y
+        Not: inverse(forward(x)) == x  (not guaranteed due to symmetry)
+        """
+        cs = CrankSlider(crank_length=1.0, rod_length=4.0)
+
+        test_angles = {
+            'principal':     [0.1, 0.5, 1.0, 2.0, math.pi - 0.1],
+            'supplementary': [math.pi + 0.1, 4.0, 5.0, 2*math.pi - 0.1]
+        }
+
+        for branch, angles in test_angles.items():
+            cs.branch = branch
+            for theta in angles:
+                y = cs.forward(theta)
+                result = cs.inverse(y)
+
+                # Round-trip must hold
+                assert cs.forward(result) == pytest.approx(y, rel=1e-6)
+
+                # Result must be in correct branch region
+                if branch == 'principal':
+                    assert 0 <= result <= math.pi
+                else:
+                    assert math.pi <= result <= 2 * math.pi
 
     def test_approximation_small_angle(self):
         """Small-angle approximation should be close for L >> r"""
-        cs = CrankSlider(crank_length=1.0, rod_length=10.0)  # L/r = 10
-        theta = 0.3  # Small angle
-        
+        cs = CrankSlider(crank_length=1.0, rod_length=10.0)
+        theta = 0.3
+
         exact = cs.forward(theta)
         approx = cs.approximate(theta)
-        
-        # Approximation should be close
+
         assert abs(exact - approx) < 0.01
 
     def test_period(self):
         """Period should be 2π"""
         cs = CrankSlider(crank_length=1.0, rod_length=4.0)
         assert cs.period() == 2 * math.pi
+
+    def test_normalize(self):
+        """Normalize wraps angle to [0, 2π)"""
+        cs = CrankSlider(crank_length=1.0, rod_length=4.0)
+        assert cs.normalize(3 * math.pi) == pytest.approx(math.pi)
+        assert cs.normalize(-math.pi/2) == pytest.approx(3*math.pi/2)
 
 
 # ============================================================================
@@ -373,8 +473,10 @@ class TestHookesJoint:
         assert h.angular_velocity_ratio(0.0) == pytest.approx(math.cos(math.pi/6))
         
         # At some angles, ratio > 1 (output speeds up)
-        ratio_at_45 = h.angular_velocity_ratio(math.pi/4)
-        assert ratio_at_45 > 1.0  # Hooke joint fluctuates
+        #ratio_at_45 = h.angular_velocity_ratio(math.pi/4)
+        #assert ratio_at_45 > 1.0  # Hooke joint fluctuates
+        ratio_near_singularity = h.angular_velocity_ratio(math.pi/3)  # 60°
+        assert ratio_near_singularity > 1.0
 
     def test_period(self):
         """Period should be 2π"""

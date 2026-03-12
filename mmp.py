@@ -618,6 +618,7 @@ class EccentricCam:
         return e * math.cos(x) + math.sqrt(r**2 - (e * math.sin(x))**2)
 
     """
+    # VERSION 1 (bad)
     def inverse(self, y: float) -> float:
         # Follower displacement -> cam rotation angle
         # Newton-Raphson from theta_guess — instance state selects branch
@@ -633,7 +634,8 @@ class EccentricCam:
             f"Newton-Raphson failed to converge for y={y}, "
             f"theta_guess={self.theta_guess}"
         )
-    """
+    
+    # VERSION 2 (also bad...)
     def inverse(self, y: float) -> float:
         theta = self.theta_guess
         for _ in range(100):
@@ -652,6 +654,177 @@ class EccentricCam:
             f"Newton-Raphson failed to converge for y={y}, "
             f"theta_guess={self.theta_guess}"
         )
+    """
+    
+    """ VERSION 3 (direction mistake...)
+    def inverse(self, y: float) -> float:
+        theta = self.theta_guess
+        for _ in range(100):
+            delta = (self.forward(theta) - y) / self._derivative(theta)
+            theta -= delta
+            if abs(delta) < 1e-10:
+                # Normalize and then adjust to correct branch
+                theta = self.normalize(theta)
+                if self.branch == 'principal' and theta > math.pi:
+                    theta -= 2*math.pi
+                elif self.branch == 'supplementary' and theta < math.pi:
+                    theta += math.pi
+                return theta
+        raise ValueError(...)
+    """
+    
+    """ VERSION 4 (another dud...)
+    def inverse(self, y: float) -> float:
+        # First check if y is in domain
+        if not self.domain.contains(y):
+            raise ValueError(f"y={y} outside domain [{self.domain.min}, {self.domain.max}]")
+        
+        theta = self.theta_guess
+        for _ in range(100):
+            delta = (self.forward(theta) - y) / self._derivative(theta)
+            theta -= delta
+            if abs(delta) < 1e-10:
+                # Normalize to [0, 2π)
+                theta = self.normalize(theta)
+                
+                # Adjust to correct branch
+                if self.branch == 'principal':
+                    # Principal branch should be in [-π/2, π/2]
+                    if theta > math.pi/2 and theta < 3*math.pi/2:
+                        # We're in supplementary region - move to principal
+                        theta = theta - math.pi if theta > math.pi else theta + math.pi
+                    # Ensure in [-π/2, π/2] range
+                    if theta > math.pi/2:
+                        theta -= 2*math.pi
+                        
+                elif self.branch == 'supplementary':
+                    # Supplementary branch should be in [π/2, 3π/2]
+                    if theta < math.pi/2 or theta > 3*math.pi/2:
+                        # We're in principal region - move to supplementary
+                        theta = theta + math.pi if theta < math.pi/2 else theta - math.pi
+                        
+                return theta
+                
+        raise ValueError(
+            f"Newton-Raphson failed to converge for y={y}, "
+            f"theta_guess={self.theta_guess}"
+        )
+    """
+    
+    """ VERSION 5 (Another dud...)
+    def inverse(self, y: float) -> float:
+        # Domain check first — before any math
+        if not self.domain.contains(y):
+            raise ValueError(
+                f"y={y} outside domain "
+                f"[{self.domain.min}, {self.domain.max}]"
+            )
+
+        # Seed Newton-Raphson to the correct branch region
+        # rather than trying to correct after convergence
+        if self.theta_guess != 0.0:
+            theta = self.theta_guess
+        elif self.branch == 'principal':
+            theta = 0.0          # seeds into [0, π] region
+        else:  # supplementary
+            theta = math.pi      # seeds into [π, 2π] region
+
+        for _ in range(100):
+            deriv = self._derivative(theta)
+            if abs(deriv) < 1e-12:
+                raise ValueError(
+                    f"Newton-Raphson derivative near zero at theta={theta} "
+                    f"— try a different theta_guess"
+                )
+            delta = (self.forward(theta) - y) / deriv
+            theta -= delta
+            if abs(delta) < 1e-10:
+                # Normalize to [0, 2π)
+                theta = self.normalize(theta)
+                return theta
+
+        raise ValueError(
+            f"Newton-Raphson failed to converge for y={y}, "
+            f"theta_guess={self.theta_guess}"
+        )
+    """
+    
+    def inverse(self, y: float) -> float:
+        """
+        Follower displacement -> cam rotation angle via Newton-Raphson.
+        
+        CRITICAL: Must constrain iteration to branch region to prevent
+        convergence to the wrong symmetric solution.
+        
+        EccentricCam forward is symmetric: forward(θ) == forward(2π - θ)
+        Branch selection determines which of the two solutions is returned.
+        """
+        # 1. Domain check FIRST — before any math
+        if not self.domain.contains(y):
+            raise ValueError(
+                f"y={y} outside domain [{self.domain.min}, {self.domain.max}]"
+            )
+        
+        # 2. Check for extrema — derivative is zero at min/max displacement
+        #    At these points, only one solution exists (θ=0 or θ=π)
+        if abs(y - self.domain.max) < MechanicalLimits.TOLERANCE: # was 'self.domain.tolerance'
+            return 0.0  # Maximum displacement at θ=0
+        if abs(y - self.domain.min) < MechanicalLimits.TOLERANCE: # was 'self.domain.tolerance'
+            return math.pi  # Minimum displacement at θ=π
+        
+        # 3. Seed to correct branch region
+        if self.theta_guess != 0.0:
+            theta = self.theta_guess
+        elif self.branch == 'principal':
+            # Principal branch: [0, π] — peak at θ=0
+            theta = 0.5  # Seed away from extrema
+        else:  # supplementary
+            # Supplementary branch: [π, 2π] — peak at θ=2π (equiv to 0)
+            theta = math.pi + 0.5  # Seed in middle of region
+        
+        # 4. Newton-Raphson with branch constraints
+        for iteration in range(100):
+            deriv = self._derivative(theta)
+            
+            # Handle near-zero derivative — project to nearest branch boundary
+            if abs(deriv) < 1e-12:
+                if self.branch == 'principal':
+                    theta = 0.0 if theta < math.pi else math.pi
+                else:
+                    theta = math.pi if theta < 1.5 * math.pi else 2 * math.pi
+                break
+            
+            delta = (self.forward(theta) - y) / deriv
+            
+            # 5. CRITICAL: Constrain step to prevent branch jumping
+            #    Limit step size to stay within branch region
+            max_step = math.pi / 4  # Don't jump more than 45° per iteration
+            delta = max(-max_step, min(max_step, delta))
+            
+            theta -= delta
+            
+            # 6. Project theta back to branch region if it escapes
+            if self.branch == 'principal':
+                # Keep in [0, π]
+                theta = max(0.0, min(math.pi, theta))
+            else:
+                # Keep in [π, 2π]
+                theta = max(math.pi, min(2 * math.pi, theta))
+            
+            # 7. Convergence check
+            if abs(delta) < 1e-10:
+                return self.normalize(theta)
+        
+        # 8. Final validation — ensure forward(inverse(y)) ≈ y
+        result = self.normalize(theta)
+        if abs(self.forward(result) - y) > 1e-6:
+            raise ValueError(
+                f"Newton-Raphson converged but forward(result)={self.forward(result)} "
+                f"does not match y={y} — try different theta_guess"
+            )
+        
+        return result
+    
     def period(self) -> float:
         return 2 * math.pi
 
@@ -728,19 +901,73 @@ class CrankSlider:
 
     def inverse(self, y: float) -> float:
         """
-        Slider position -> crank angle
-        Newton-Raphson from theta_guess — instance state selects branch
+        Slider position -> crank angle via Newton-Raphson.
+
+        CrankSlider forward is symmetric: forward(θ) == forward(2π - θ)
+        Branch region constrains iteration — prevents convergence to wrong solution.
+
+        Correctness criterion: forward(inverse(y)) == y within branch region
+        Not: inverse(forward(x)) == x  (not guaranteed due to symmetry)
         """
-        theta = self.theta_guess
+        
+        # 1. Domain check first — before any math
+        if not self.domain.contains(y):
+            raise ValueError(
+                f"y={y} outside domain "
+                f"[{self.domain.min}, {self.domain.max}]"
+            )
+
+        # 2. Extrema bypass — derivative is zero at max/min displacement
+        #    Only one solution exists at these points
+        if abs(y - self.domain.max) < MechanicalLimits.TOLERANCE:
+            return 0.0       # Maximum displacement at θ=0
+        if abs(y - self.domain.min) < MechanicalLimits.TOLERANCE:
+            return math.pi   # Minimum displacement at θ=π
+
+        # 3. Seed to correct branch region
+        if self.theta_guess != 0.0:
+            theta = self.theta_guess
+        elif self.branch == 'principal':
+            theta = 0.5              # Seeds into [0, π]
+        else:
+            theta = math.pi + 0.5   # Seeds into [π, 2π]
+
+        # 4. Newton-Raphson with branch constraints
         for _ in range(100):
-            delta = (self.forward(theta) - y) / self._derivative(theta)
+            deriv = self._derivative(theta)
+
+            if abs(deriv) < 1e-12:
+                raise ValueError(
+                    f"Newton-Raphson derivative near zero at theta={theta} "
+                    f"— try a different theta_guess"
+                )
+
+            delta = (self.forward(theta) - y) / deriv
+
+            # 5. Limit step size — prevents single-step branch jumping
+            max_step = math.pi / 4
+            delta = max(-max_step, min(max_step, delta))
+
             theta -= delta
+
+            # 6. Clamp to branch region — iteration cannot escape
+            if self.branch == 'principal':
+                theta = max(0.0, min(math.pi, theta))
+            else:
+                theta = max(math.pi, min(2 * math.pi, theta))
+
+            # 7. Convergence check
             if abs(delta) < 1e-10:
-                return theta
-        raise ValueError(
-            f"Newton-Raphson failed to converge for y={y}, "
-            f"theta_guess={self.theta_guess}"
-        )
+                return self.normalize(theta)
+
+        # 8. Final validation
+        result = self.normalize(theta)
+        if abs(self.forward(result) - y) > 1e-6:
+            raise ValueError(
+                f"Newton-Raphson converged but forward(result)={self.forward(result)} "
+                f"does not match y={y} — try different theta_guess"
+            )
+        return result
 
     def approximate(self, x: float) -> float:
         """
