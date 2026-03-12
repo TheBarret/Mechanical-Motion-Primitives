@@ -6,7 +6,7 @@ Classifications:
 # CLASS I: LINEAR SCALING (Affine Maps) (finished and tested)
 Continuous, invertible, constant ratio
 
-# CLASS II: PERIODIC NON-LINEAR (Trigonometric) (currently testing...)
+# CLASS II: PERIODIC NON-LINEAR (Trigonometric) (finished and tested)
 Oscillatory, bounded, non-injective without domain restriction
 
 # CLASS III: CONFIGURATION-DEPENDENT (Mode-Switchable) (to do)
