@@ -12,11 +12,11 @@ a unit type, and (where mechanically valid) an inverse() and derivative(). Primi
 The chain validates itself at construction you cannot connect an angular output to a linear input without an explicit adapter, 
 and a Governor (physical clamp) permanently marks the chain as non-invertible. 
  
-- Class I - Linear Scaling (Affine Maps)
+- Class I - Linear Scaling (Affine Maps)  
 These are continuous, invertible, constant ratio, the workhorses of rotational and linear transmissions.  
 All Class I primitives are monotonic and fully invertible.  
 
-- Class II - Periodic Non-Linear (Trigonometric) 
+- Class II - Periodic Non-Linear (Trigonometric)  
 These are oscillatory, bounded output, non-injective over the full domain, subdivided by inversion behavior. 
 The `Periodic Bijective` are invertible within one period, no branch selection needed, 
 as where the `Periodic Branch Dependent` is non-injective, inverse requires branch selection required. 
