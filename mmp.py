@@ -1265,7 +1265,7 @@ class HookesJoint:
     #        math.sin(y) / math.cos(self.shaft_angle),
     #        math.cos(y)
     #    )
-      forward() and inverse are problematic it uses atan2 which is bounded to (-π, π],
+      forward() and inverse() are problematic it uses atan2 which is bounded to [-π, π],
       so as input sweeps continuously past ±π/2 the output discontinuously wraps.
     
       The actual Hooke's joint equation is:
@@ -1393,3 +1393,4 @@ class ChainBuilder:
         if out_unit == Dimension.GENERIC or in_unit == Dimension.GENERIC:
             return True
         return out_unit == in_unit
+
