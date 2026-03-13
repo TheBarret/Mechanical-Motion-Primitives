@@ -5,7 +5,7 @@ Test suite for Mechanical Motion Primitives Class I
 
 import pytest
 import math
-from mmpv3 import *
+from mmp import *
 
 # ============================================================================
 # Test Domain and Dimension
@@ -440,4 +440,5 @@ def test_encoding_vs_hashing_distinction():
 # ============================================================================
 
 if __name__ == "__main__":
+
     pytest.main([__file__, "-v"])
