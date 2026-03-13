@@ -23,7 +23,8 @@ as where the `Periodic Branch Dependent` is non-injective, inverse requires bran
 
 <img width="869" height="456" alt="image" src="https://github.com/user-attachments/assets/282fe725-5eef-4064-bd44-afd45296a37a" />  
 
-(A Governor wraps any primitive and clamps its output inserting one permanently sets is_invertible = False on the entire chain.)
+### Governor 
+A Governor wraps any primitive and clamps its output inserting one permanently sets `is_invertible = False` on the entire chain.
 
 ## Domain and Units
 Every primitive declares a `Domain` the physical envelope it can accept and produce. 
