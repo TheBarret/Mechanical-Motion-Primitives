@@ -58,7 +58,7 @@ Chains are built with ChainBuilder and are immutable once constructed. Validatio
 ```py
 import math
 import numpy as np
-from mmpv3 import *
+from mmp import *
 
 if __name__ == "__main__":
     wrist = (ChainBuilder()
