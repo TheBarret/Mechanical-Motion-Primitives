@@ -70,7 +70,7 @@ if __name__ == "__main__":
     # Forward kinematics
     position = wrist_actuator.forward(1.5)      # motor angle → actuator position
     
-    # Inverse kinematics (raises InverseUndefinedError — Governor present)
+    # Inverse kinematics (raises InverseUndefinedError if Governor was present)
     motor_angle = wrist_actuator.inverse(1.2)
     
     # Instantaneous transmission ratio via chain rule
