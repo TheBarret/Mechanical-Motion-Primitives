@@ -2,15 +2,11 @@ from __future__ import annotations
 
 """
 Mechanical Motion Primitives
+
+
 Behavioral classification-based implementation of mechanical-to-mathematical mappings
-
-Class:
-- I LINEAR SCALING
-- II PERIODIC NON-LINEAR
-
 env: Python 3.10.10
 """
-
 import math
 import random
 import hashlib
@@ -1255,13 +1251,51 @@ class HookesJoint:
     @property
     def available_branches(self) -> list[str]:
         return ['none']
+      
+    """
+    #def forward(self, x: float) -> float:
+    #    return math.atan2(
+    #        math.sin(x) * math.cos(self.shaft_angle),
+    #        math.cos(x)
+    #    )
+    #def inverse(self, y: float, branch: Optional[str] = None, 
+    #            guess: Optional[float] = None) -> float:
 
+    #    return math.atan2(
+    #        math.sin(y) / math.cos(self.shaft_angle),
+    #        math.cos(y)
+    #    )
+      forward() and inverse are problematic it uses atan2 which is bounded to (-π, π],
+      so as input sweeps continuously past ±π/2 the output discontinuously wraps.
+    
+      The actual Hooke's joint equation is:
+        tan(θ_out) = cos(α) * tan(θ_in)
+    
+      Atan2 is the wrong approach, only useful for quadrant-aware angle reconstruction, not for tracking a continuously varying angle.
+      The correct implementation needs to track which quadrant θ_in is in and preserve continuity using math.atan
+      
+    """
     def forward(self, x: float) -> float:
-        """Input shaft angle (radians) -> output shaft angle (radians)"""
-        return math.atan2(
-            math.sin(x) * math.cos(self.shaft_angle),
-            math.cos(x)
-        )
+        """
+        Input shaft angle (radians) -> output shaft angle (radians)
+        """
+        # Preserve continuity — atan gives correct value in (-π/2, π/2),
+        # quadrant correction carries it through each half-period
+        n = math.floor(x / math.pi + 0.5)   # which half-period we're in
+        raw = math.atan(math.cos(self.shaft_angle) * math.tan(x))
+        return raw + n * math.pi
+        
+    def inverse(self, y: float, branch: Optional[str] = None,
+                guess: Optional[float] = None) -> float:
+        """
+        Output shaft angle (radians) -> input shaft angle (radians)
+        Inverse form: tan(θ_in) = tan(θ_out) / cos(α)
+        
+        branch and guess are ignored (included for protocol compatibility)
+        """
+        n = math.floor(y / math.pi + 0.5)
+        raw = math.atan(math.tan(y) / math.cos(self.shaft_angle))
+        return raw + n * math.pi
 
     def derivative(self, x: float) -> float:
         """
@@ -1273,19 +1307,6 @@ class HookesJoint:
         cos_alpha = math.cos(self.shaft_angle)
         denom = cos_x**2 + (sin_x * cos_alpha)**2
         return cos_alpha / denom
-
-    def inverse(self, y: float, branch: Optional[str] = None, 
-                guess: Optional[float] = None) -> float:
-        """
-        Output shaft angle (radians) -> input shaft angle (radians)
-        Inverse form: tan(θ_in) = tan(θ_out) / cos(α)
-        
-        branch and guess are ignored (included for protocol compatibility)
-        """
-        return math.atan2(
-            math.sin(y) / math.cos(self.shaft_angle),
-            math.cos(y)
-        )
 
     def angular_velocity_ratio(self, x: float) -> float:
         """
