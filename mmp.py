@@ -270,12 +270,12 @@ class CompositePrimitive:
         if not self._input_domain.contains(x):
             #import warnings
             #warnings.warn(f"Input {x} outside recommended domain {self._input_domain} ")
-            print(f"### Warning:")
-            print(f"# CompositePrimitive.forward({x})")
-            print(f"#     -> input {x} outside recommended domain")
-            print(f"# Domain: {self._input_domain}")
-            
-            print()
+            #print(f"### Warning:")
+            #print(f"# CompositePrimitive.forward({x})")
+            #print(f"#     -> input {x} outside recommended domain")
+            #print(f"# Domain: {self._input_domain}")
+            #print()
+            pass
         
         result = x
         for p in self.primitives:
