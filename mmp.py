@@ -1,29 +1,32 @@
+from __future__ import annotations
+
 """
-file version   : 1.0
 Mechanical Motion Primitives
 Behavioral classification-based implementation of mechanical-to-mathematical mappings
-Tested in Python 3.10.10
-"""
 
-from __future__ import annotations
+Class:
+- I LINEAR SCALING
+- II PERIODIC NON-LINEAR
+
+env: Python 3.10.10
+"""
 
 import math
 import random
 import hashlib
-
 from math           import gcd
 from fractions      import Fraction
-
 from abc            import ABC, abstractmethod
 from dataclasses    import dataclass, field
 from typing         import Protocol, Tuple, Optional, Callable, Any
 from typing         import runtime_checkable
 from enum           import Enum, auto
 
-
-# ============================================================================
-# CORE: MECHANICAL LIMITS - Physical constants
-# ============================================================================
+'''
+============================================================================
+CORE: MECHANICAL LIMITS - Physical constants
+============================================================================
+'''
 
 class Dimension(Enum):
     ANGLE        = auto()   # radians
@@ -32,17 +35,18 @@ class Dimension(Enum):
     VELOCITY     = auto()   # rad/s or m/s — context dependent
     GENERIC      = auto()   # unknown/any — use sparingly
 
-# ============================================================================
-# CORE: DOMAIN
-# Geometric truth — what a primitive can physically produce or accept
-# None implies unbounded (±inf)
-# ============================================================================
+'''
+============================================================================
+CORE: DOMAIN
+Geometric truth — what a primitive can physically produce or accept
+None implies unbounded (±inf)
+============================================================================
+'''
 
 @dataclass(frozen=True)
 class Domain:
     """
     Geometric validity envelope — declared by primitive, enforced by compositor.
-
     None implies unbounded in that direction.
     MechanicalLimits are compositor-level warnings, not primitive-level walls.
 
@@ -63,11 +67,13 @@ class Domain:
     def is_finite(self) -> bool:
         return self.min is not None and self.max is not None
 
-# ============================================================================
-# CORE: MECHANICAL LIMITS
-# Compositor-level sanity thresholds — warning triggers, not hard walls
-# Nothing physical exceeds these — if it does, it is a bug in the caller
-# ============================================================================
+'''
+============================================================================
+CORE: MECHANICAL LIMITS
+Compositor-level sanity thresholds — warning triggers, not hard walls
+Nothing physical exceeds these — if it does, it is a bug in the caller
+============================================================================
+'''
 
 class MechanicalLimits:
     MAX_ANGLE        = 4 * math.pi   # two full rotations
@@ -76,15 +82,18 @@ class MechanicalLimits:
     MAX_VELOCITY     = 1e4           # 10,000 rad/s — jet turbine territory
     TOLERANCE        = 1e-9          # float drift forgiveness
 
-# ============================================================================
-# CORE: PROTOCOLS
-# ============================================================================
-# Primitive          → float → float          (base, everything)
-# Invertible         → float → float          (bidirectional)
-# OneWay             → float → float          (forward only)
-# Configurable       → mode switching         (Class III)
-# Periodic           → float → float cyclic   (Class II)
-# VectorPrimitive    → DEFERRED               (Class VII)
+'''
+============================================================================
+CORE: PROTOCOLS
+============================================================================
+
+ Primitive          → float → float          (base, everything)
+ Invertible         → float → float          (bidirectional)
+ OneWay             → float → float          (forward only)
+ Periodic           → float → float cyclic   (Class II)
+ Configurable       → mode switching         (Class III)
+ VectorPrimitive    → DEFERRED               (Class VII)
+'''
 
 @runtime_checkable
 class Primitive(Protocol):
@@ -94,7 +103,7 @@ class Primitive(Protocol):
     """
     domain: Domain
     is_invertible: bool
-    is_monotonic: bool = False
+    is_monotonic: bool
     
     def forward(self, x: float) -> float: ...
     def derivative(self, x: float) -> float: ...
@@ -107,11 +116,12 @@ class Invertible(Primitive, Protocol):
     """
     domain: Domain
     is_invertible: bool
-
+    
     def forward(self, x: float) -> float: ...
-    def inverse(self, y: float, branch: Optional[str] = None, guess: Optional[float] = None) -> float: ... 
-    def available_branches(self) -> list[str]:
-        return ['none']  # initiate primitives without branches
+    def inverse(self, y: float, branch: Optional[str] = None, guess: Optional[float] = None) -> float: ...
+    
+    @property
+    def available_branches(self) -> list[str]: ...
 
 @runtime_checkable
 class OneWay(Primitive, Protocol):
@@ -121,7 +131,7 @@ class OneWay(Primitive, Protocol):
     """
     domain: Domain
     is_invertible: bool
-
+    
     def forward(self, x: float) -> float: ...
 
 @runtime_checkable
@@ -143,11 +153,11 @@ class Periodic(Primitive, Protocol):
     """
     domain: Domain
     is_invertible: bool
-
+    
     def forward(self, x: float) -> float: ...
     def period(self) -> float: ...
     def normalize(self, x: float) -> float: ...
-    
+
 @runtime_checkable
 class PeriodicBijective(Periodic, Invertible, Protocol):
     """
@@ -159,12 +169,11 @@ class PeriodicBijective(Periodic, Invertible, Protocol):
     domain: Domain
     is_invertible: bool
     is_analytically_invertible: bool
-
+    
     def forward(self, x: float) -> float: ...
-    def inverse(self, y: float) -> float: ...
+    def inverse(self, y: float, branch: Optional[str] = None, guess: Optional[float] = None) -> float: ...
     def period(self) -> float: ...
     def normalize(self, x: float) -> float: ...
-
 
 @runtime_checkable
 class PeriodicBranchDependent(Periodic, Invertible, Protocol):
@@ -175,16 +184,22 @@ class PeriodicBranchDependent(Periodic, Invertible, Protocol):
     domain: Domain
     is_invertible: bool
     is_analytically_invertible: bool
-    available_branches: list[str]
-
+    branch: str
+    theta_guess: float
+    
     def forward(self, x: float) -> float: ...
-    def inverse(self, y: float, branch: str, guess: Optional[float] = None) -> float: ...
+    def inverse(self, y: float, branch: Optional[str] = None, guess: Optional[float] = None) -> float: ...
     def period(self) -> float: ...
     def normalize(self, x: float) -> float: ...
-
-# ============================================================================
-# CORE: EXCEPTIONS
-# ============================================================================
+    
+    @property
+    def available_branches(self) -> list[str]: ...
+    
+''' 
+    ============================================================================
+    CORE: EXCEPTIONS
+    ============================================================================
+''' 
 
 class MMPError(Exception):
     """Base exception for all MMP errors"""
@@ -200,10 +215,12 @@ class DomainViolationError(CompositionError):
 
 class InverseUndefinedError(MMPError):
     """Inverse requested on a non-invertible or lossy chain"""
-
-# ============================================================================
-# CORE: Composite Primitive
-# ============================================================================
+    
+'''
+============================================================================
+CORE: Composite Primitive
+============================================================================
+'''
 
 @dataclass(frozen=True)
 class CompositePrimitive:
@@ -212,22 +229,22 @@ class CompositePrimitive:
     All validation happens at construction.
     """
     primitives: tuple[Primitive, ...]
-    
+
     def __post_init__(self):
         # Validate unit compatibility
         for i in range(len(self.primitives) - 1):
             out_unit = self.primitives[i].domain.output_unit
-            in_unit = self.primitives[i+1].domain.input_unit
+            in_unit =  self.primitives[i+1].domain.input_unit
             if not self._units_compatible(out_unit, in_unit):
                 raise DimensionMismatchError(
-                    f"Stage {i} output {out_unit} != Stage {i+1} input {in_unit}"
+                    f"Stage {i} output {out_unit} != Stage {i+1} input {in_unit} "
                 )
         
         # Compute and store derived properties
         object.__setattr__(self, '_input_domain', self._compute_input_domain())
         object.__setattr__(self, '_output_domain', self._compute_output_domain())
         object.__setattr__(self, '_period', self._compute_period())
-    
+
     @property
     def domain(self) -> Domain:
         """Required by Primitive protocol"""
@@ -237,32 +254,32 @@ class CompositePrimitive:
             input_unit=self.primitives[0].domain.input_unit,
             output_unit=self.primitives[-1].domain.output_unit
         )
-        
+    
     @property
     def is_invertible(self) -> bool:
         return all(p.is_invertible for p in self.primitives)
-    
+
     @property
     def input_domain(self) -> Domain:
         """Valid input range (back-propagated constraints)"""
         return self._input_domain
-    
+
     @property
     def output_domain(self) -> Domain:
         """Achievable output range"""
         return self._output_domain
-    
+
     def forward(self, x: float) -> float:
         """Apply chain forward with input validation warning"""
         if not self._input_domain.contains(x):
             import warnings
-            warnings.warn(f"Input {x} outside recommended domain {self._input_domain}")
+            warnings.warn(f"Input {x} outside recommended domain {self._input_domain} ")
         
         result = x
         for p in self.primitives:
             result = p.forward(result)
         return result
-    
+
     def derivative(self, x: float) -> float:
         """Chain rule: dy/dx = fₙ'(...f₂'(f₁'(x))...)"""
         # Apply chain rule from last to first
@@ -280,53 +297,39 @@ class CompositePrimitive:
             deriv *= p.derivative(intermediates[-(i+1)])
         
         return deriv
-    
+
     def inverse(self, y: float, branches: Optional[list[str]] = None, guesses: Optional[list[float]] = None) -> float:
         """
         Inverse with per-stage branch context.
         branches and guesses align with primitives that need them.
+        Uses kwargs passthrough to avoid state mutation bugs.
         """
         if not self.is_invertible:
             raise InverseUndefinedError("Chain is not invertible")
         
-        # Save original states if we're overriding
-        saved_states = {}
-        if branches or guesses:
-            for i, p in enumerate(self.primitives):
-                if hasattr(p, 'branch') and branches and i < len(branches):
-                    saved_states[i] = (getattr(p, 'branch', None), getattr(p, 'theta_guess', None))
-                    if branches[i] is not None:
-                        p.branch = branches[i]
-                if hasattr(p, 'theta_guess') and guesses and i < len(guesses):
-                    if i not in saved_states:
-                        saved_states[i] = (getattr(p, 'branch', None), getattr(p, 'theta_guess', None))
-                    if guesses[i] is not None:
-                        p.theta_guess = guesses[i]
-        
-        try:
-            result = y
-            for p in reversed(self.primitives):
-                if hasattr(p, 'inverse'):
-                    result = p.inverse(result)  # Uses possibly overridden branch/guess
-                else:
-                    raise InverseUndefinedError(
-                        f"Primitive {p} claims invertible but lacks inverse method"
-                    )
-            return result
-        finally:
-            # Restore original states
-            for i, (old_branch, old_guess) in saved_states.items():
-                p = self.primitives[i]
-                if old_branch is not None:
-                    p.branch = old_branch
-                if old_guess is not None:
-                    p.theta_guess = old_guess
-    
-    
+        result = y
+        # Iterate backwards through primitives
+        for i, p in enumerate(reversed(self.primitives)):
+            # Calculate original index for branch/guess lookup
+            idx = len(self.primitives) - 1 - i
+            
+            # Extract specific branch/guess for this stage if provided
+            branch = branches[idx] if branches and idx < len(branches) else None
+            guess = guesses[idx] if guesses and idx < len(guesses) else None
+            
+            if hasattr(p, 'inverse'):
+                # Pass branch/guess directly to primitive inverse
+                result = p.inverse(result, branch=branch, guess=guess)
+            else:
+                raise InverseUndefinedError(
+                    f"Primitive {p} claims invertible but lacks inverse method "
+                )
+        return result
+
     def period(self) -> Optional[float]:
         """LCM of all periodic primitives, or None if aperiodic"""
         return self._period
-    
+
     def _compute_input_domain(self) -> Domain:
         """
         Back-propagate constraints to find valid input range.
@@ -338,7 +341,7 @@ class CompositePrimitive:
             return Domain(input_unit=Dimension.GENERIC, output_unit=Dimension.GENERIC)
         
         # Start with the first primitive's input domain
-        min_x = self.primitives[0].domain.min
+        min_x  = self.primitives[0].domain.min
         max_x = self.primitives[0].domain.max
         
         # Track cumulative mapping to later stages
@@ -347,11 +350,11 @@ class CompositePrimitive:
         
         for i, p in enumerate(self.primitives[1:], start=1):
             # For each subsequent primitive, we need to ensure that
-            # the output of previous stages falls within p's input domain
+            # the output of previous stages  falls within p's input domain
             
             if p.domain.min is not None or p.domain.max is not None:
                 # This primitive has input constraints
-                # We need to find what initial x values produce inputs to p
+                # We need to  find what initial x values produce inputs to p
                 # that satisfy p.domain.contains(...)
                 
                 # Build function that maps x -> input to current primitive
@@ -384,13 +387,13 @@ class CompositePrimitive:
             input_unit=self.primitives[0].domain.input_unit,
             output_unit=self.primitives[0].domain.output_unit
         )
-    
+
     def _compute_output_domain(self) -> Domain:
         """
         Forward-propagate to find achievable output range.
         
         This tells you what output values the chain can actually produce
-        given that all intermediate stages must stay within their domains.
+        given that all intermediate stages must stay  within their domains.
         """
         if not self.primitives:
             return Domain(input_unit=Dimension.GENERIC, output_unit=Dimension.GENERIC)
@@ -400,7 +403,7 @@ class CompositePrimitive:
         # that the final primitive cannot produce
         last = self.primitives[-1]
         min_y = last.domain.min
-        max_y = last.domain.max
+        max_y =  last.domain.max
         
         # But we must also consider that intermediate constraints might
         # further restrict what the last primitive can actually receive as input
@@ -417,7 +420,7 @@ class CompositePrimitive:
                 # First stage's output range is its forward mapping
                 # applied to its full input domain
                 if p.domain.min is not None and p.domain.max is not None:
-                    # If input domain is bounded, we can compute output range
+                    # If input domain is bounded, we can compute output range 
                     # by evaluating at endpoints (assuming monotonicity)
                     try:
                         y_min = p.forward(p.domain.min)
@@ -454,7 +457,7 @@ class CompositePrimitive:
                 
                 # If intersection is empty, chain is impossible
                 if stage_input_min is not None and stage_input_max is not None:
-                    if stage_input_min > stage_input_max:
+                    if stage_input_min  > stage_input_max:
                         # This chain cannot produce any valid output
                         achievable_min = float('inf')
                         achievable_max = -float('inf')
@@ -469,7 +472,7 @@ class CompositePrimitive:
                         achievable_min = min(y_min, y_max)
                         achievable_max = max(y_min, y_max)
                     except:
-                        # Non-monotonic - fall back to primitive's declared bounds
+                        # Non-monotonic  - fall back to primitive's declared bounds
                         achievable_min = p.domain.min
                         achievable_max = p.domain.max
                 else:
@@ -483,14 +486,14 @@ class CompositePrimitive:
             achievable_min = max(achievable_min, last.domain.min)
         if last.domain.max is not None and achievable_max is not None:
             achievable_max = min(achievable_max, last.domain.max)
-        
+            
         return Domain(
             min=None if achievable_min in (None, float('inf'), -float('inf')) else achievable_min,
             max=None if achievable_max in (None, float('inf'), -float('inf')) else achievable_max,
             input_unit=self.primitives[0].domain.input_unit,
             output_unit=last.domain.output_unit
         )
-    
+
     def _compute_period(self) -> Optional[float]:
         """Return period if all primitives share the exact same period."""
         periods = set()
@@ -502,30 +505,30 @@ class CompositePrimitive:
         
         if len(periods) == 1:
             return periods.pop()
-        elif len(periods) > 1:
-            print("compositePrimitive._compute_period(): mixed periods detected")
+        elif len(periods)  > 1:
+            print("compositePrimitive._compute_period(): mixed periods detected ")
             # Conservative: treat as aperiodic
             return None  
         return None
-    
+
     @staticmethod
     def _units_compatible(out_unit: Dimension, in_unit: Dimension) -> bool:
         """Unit compatibility with GENERIC wildcard"""
         if out_unit == Dimension.GENERIC or in_unit == Dimension.GENERIC:
             return True
         return out_unit == in_unit
-    
-# ============================================================================
-# CORE: GOVERNOR
-# Stack-level output clamp — wraps any Primitive
-# Mechanically: centrifugal governor, pressure relief valve, torque limiter
-# ============================================================================
+'''
+============================================================================
+CORE: GOVERNOR
+Stack-level output clamp — wraps any Primitive
+Mechanically: centrifugal governor, pressure relief valve, torque limiter
+============================================================================
+'''
 
 @dataclass
 class Governor:
     """
     Transparent stack wrapper — clamps output to [min_val, max_val].
-
     is_invertible is permanently False.
     Clamping is a lossy operation — information destroyed at limits
     cannot be recovered. The entire chain becomes OneWay the moment
@@ -538,22 +541,22 @@ class Governor:
     max_val:    float
     hysteresis: float = 0.0
     domain: Domain = field(init=False)
-    
+
     def __post_init__(self):
         # validate bounds
-        if self.min_val >= self.max_val:
+        if self.min_val  >= self.max_val:
             raise ValueError(
-                f"min_val ({self.min_val}) must be less than "
-                f"max_val ({self.max_val})"
+                f"min_val ({self.min_val}) must be less than  "
+                f"max_val ({self.max_val}) "
             )
         
         # validate hysteresis
-        if self.hysteresis < 0:
-            raise ValueError("Hysteresis must be non-negative")
+        if self.hysteresis  < 0:
+            raise ValueError("Hysteresis must be non-negative ")
         
-        if self.hysteresis >= (self.max_val - self.min_val) / 2:
+        if self.hysteresis  >= (self.max_val - self.min_val) / 2:
             raise ValueError(
-                "Hysteresis too large — would invert the governed range"
+                "Hysteresis too large — would invert the governed range "
             )
         
         # set domain once
@@ -567,7 +570,11 @@ class Governor:
     @property
     def is_invertible(self) -> bool:
         # clamping destroys invertibility
-        return False  
+        return False
+
+    @property
+    def is_monotonic(self) -> bool:
+        return False  # clamping makes output non-monotonic at limits
 
     def forward(self, x: float) -> float:
         y = self.primitive.forward(x)
@@ -576,17 +583,18 @@ class Governor:
     def derivative(self, x: float) -> float:
         """Derivative of clamped output"""
         y = self.primitive.forward(x)
-        if y <= self.min_val or y >= self.max_val:
+        if y  <= self.min_val or y  >= self.max_val:
             # derivative is zero (clipping)
             return 0.0
         return self.primitive.derivative(x)
-
-# ============================================================================
-# CLASS I: LINEAR SCALING (Affine Maps)
-# Continuous, invertible, constant ratio
-# Satisfies: Primitive, Invertible
-# is_invertible: True (all Class I are bijective)
-# ============================================================================
+'''
+============================================================================
+CLASS I: LINEAR SCALING (Affine Maps)
+Continuous, invertible, constant ratio
+Satisfies: Primitive, Invertible
+is_invertible: True (all Class I are bijective)
+============================================================================
+'''
 
 @dataclass
 class SpurGear:
@@ -595,12 +603,11 @@ class SpurGear:
     y = ratio * x
     forward:  x -> x * ratio
     inverse:  y -> y / ratio
-
     input_unit:  ANGLE  (input shaft rotation)
     output_unit: ANGLE  (output shaft rotation)
     """
     ratio: float
-    
+
     def __post_init__(self):
         if self.ratio == 0:
             raise ValueError("Gear ratio cannot be zero — undefined inverse")
@@ -616,7 +623,7 @@ class SpurGear:
     def forward(self, x: float) -> float:
         return x * self.ratio
 
-    def inverse(self, y: float) -> float:
+    def inverse(self, y: float, branch: Optional[str] = None, guess: Optional[float] = None) -> float:
         return y / self.ratio
         
     # Constant, independent of x
@@ -626,8 +633,9 @@ class SpurGear:
     @property
     def is_monotonic(self) -> bool:
         # all spur gears are monotonic
-        return True  
-        
+        return True
+
+    @property
     def available_branches(self) -> list[str]:
         return ['none']
 
@@ -638,7 +646,6 @@ class CompoundGearTrain:
     y = r1 * r2 * ... * rN * x
     forward:  applies each ratio left to right
     inverse:  applies each ratio right to left (reversed)
-
     input_unit:  ANGLE  (input shaft rotation)
     output_unit: ANGLE  (output shaft rotation)
     """
@@ -647,10 +654,10 @@ class CompoundGearTrain:
     def __post_init__(self):
         if not self.ratios:
             raise ValueError(
-                "CompoundGearTrain requires at least one ratio"
+                "CompoundGearTrain requires at least one ratio "
             )
         if any(r == 0 for r in self.ratios):
-            raise ValueError("All gear ratios must be non-zero")
+            raise ValueError("All gear ratios must be non-zero ")
         self.domain = Domain(
             input_unit=Dimension.ANGLE,
             output_unit=Dimension.ANGLE
@@ -666,12 +673,17 @@ class CompoundGearTrain:
             result = SpurGear(r).forward(result)
         return result
 
-    def inverse(self, y: float) -> float:
+    def inverse(self, y: float, branch: Optional[str] = None, guess: Optional[float] = None) -> float:
         result = y
         for r in reversed(self.ratios):
             result = SpurGear(r).inverse(result)
         return result
-        
+
+    @property
+    def is_monotonic(self) -> bool:
+        return True  # product of non-zero ratios is always monotonic
+
+    @property
     def available_branches(self) -> list[str]:
         return ['none']
 
@@ -690,7 +702,6 @@ class RackAndPinion:
     y = pitch_radius * theta
     forward:  rotation (radians) -> linear displacement
     inverse:  linear displacement -> rotation (radians)
-
     input_unit:  ANGLE   (input shaft rotation)
     output_unit: LENGTH  (linear displacement)
 
@@ -701,8 +712,8 @@ class RackAndPinion:
     pitch_radius: float
 
     def __post_init__(self):
-        if self.pitch_radius <= 0:
-            raise ValueError("Pitch radius must be positive")
+        if self.pitch_radius  <= 0:
+            raise ValueError("Pitch radius must be positive ")
         self.domain = Domain(
             input_unit=Dimension.ANGLE,
             output_unit=Dimension.LENGTH
@@ -712,17 +723,22 @@ class RackAndPinion:
     def is_invertible(self) -> bool:
         return True
 
+    @property
+    def is_monotonic(self) -> bool:
+        return True  # linear scaling is always monotonic
+
     def forward(self, x: float) -> float:
         """Rotation (radians) -> linear displacement"""
         return self.pitch_radius * x
 
-    def inverse(self, y: float) -> float:
+    def inverse(self, y: float, branch: Optional[str] = None, guess: Optional[float] = None) -> float:
         """Linear displacement -> rotation (radians)"""
         return y / self.pitch_radius
-    
+
+    @property
     def available_branches(self) -> list[str]:
         return ['none']
-        
+
     def derivative(self, x: float) -> float:
         """dy/dx = pitch_radius (constant, independent of x)"""
         return self.pitch_radius
@@ -734,7 +750,6 @@ class Wedge:
     y = x * tan(angle)
     forward:  horizontal displacement -> vertical displacement
     inverse:  vertical displacement -> horizontal displacement
-
     mechanical_advantage = cot(angle) = 1 / tan(angle)
 
     input_unit:  LENGTH  (horizontal displacement)
@@ -747,10 +762,10 @@ class Wedge:
     angle_rad: float
 
     def __post_init__(self):
-        if not (0 < self.angle_rad < math.pi / 2):
+        if not (0  < self.angle_rad  < math.pi / 2):
             raise ValueError(
-                "Wedge angle must be in (0, π/2) exclusive — "
-                "at 0 no lift occurs, at π/2 tan is undefined"
+                "Wedge angle must be in (0, π/2) exclusive —  "
+                "at 0 no lift occurs, at π/2 tan is undefined "
             )
         self.domain = Domain(
             input_unit=Dimension.LENGTH,
@@ -770,10 +785,15 @@ class Wedge:
         """Horizontal displacement -> vertical displacement"""
         return x * math.tan(self.angle_rad)
 
-    def inverse(self, y: float) -> float:
+    def inverse(self, y: float, branch: Optional[str] = None, guess: Optional[float] = None) -> float:
         """Vertical displacement -> horizontal displacement"""
         return y / math.tan(self.angle_rad)
 
+    @property
+    def is_monotonic(self) -> bool:
+        return True  # tan(angle) is a positive constant in (0, π/2)
+
+    @property
     def available_branches(self) -> list[str]:
         return ['none']
 
@@ -788,7 +808,6 @@ class OldhamCoupling:
     y = x  (identity on angle — ratio is always 1.0)
     forward:  input shaft angle -> output shaft angle
     inverse:  output shaft angle -> input shaft angle
-
     The physical shaft offset is a geometric property only.
     It does not enter the scalar mapping — angle is preserved exactly.
     shaft_offset exposes the physical translation for reference.
@@ -813,7 +832,7 @@ class OldhamCoupling:
         """Input shaft angle -> output shaft angle (1:1)"""
         return x
 
-    def inverse(self, y: float) -> float:
+    def inverse(self, y: float, branch: Optional[str] = None, guess: Optional[float] = None) -> float:
         """Output shaft angle -> input shaft angle (1:1)"""
         return y
 
@@ -821,69 +840,85 @@ class OldhamCoupling:
     def shaft_offset(self) -> tuple[float, float]:
         """Physical offset between shaft centers — not part of scalar map"""
         return (self.offset_x, self.offset_y)
-    
+
+    @property
+    def is_monotonic(self) -> bool:
+        return True  # identity is trivially monotonic
+
+    @property
     def available_branches(self) -> list[str]:
         return ['none']
-    
+
     def derivative(self, x: float) -> float:
         """dy/dx = 1 (identity mapping)"""
         return 1.0
         
-# ============================================================================
-# CLASS II: PERIODIC NON-LINEAR (Trigonometric)
-# Oscillatory, bounded, non-injective without domain restriction
-# Satisfies: Primitive, Periodic
-# Subdivided: PeriodicBijective | PeriodicBranchDependent
-# ============================================================================
+'''
+    ============================================================================
+    CLASS II: PERIODIC NON-LINEAR (Trigonometric)
+    Oscillatory, bounded, non-injective without domain restriction
+    Satisfies: Primitive, Periodic
+    Subdivided: PeriodicBijective | PeriodicBranchDependent
+    ============================================================================
+'''
 
-@dataclass(frozen=True)  #IMMUTABLE
+@dataclass(frozen=True)  # IMMUTABLE
 class ScotchYoke:
     amplitude: float
     phase: float = 0.0
+    branch: str = 'principal'
+    theta_guess: float = 0.0
+    is_analytically_invertible: bool = True
     is_monotonic: bool = False
-    
+
     def __post_init__(self):
         if self.amplitude == 0:
-            raise ValueError("Amplitude cannot be zero")
+            raise ValueError("Amplitude cannot be zero ")
+        if self.branch not in self.available_branches:
+            raise ValueError(
+                f"branch must be one of {self.available_branches} "
+            )
         object.__setattr__(self, 'domain', Domain(
             min=-abs(self.amplitude),
             max=abs(self.amplitude),
             input_unit=Dimension.ANGLE,
             output_unit=Dimension.LENGTH
         ))
-    
+
     @property
     def is_invertible(self) -> bool:
         return True
-    
+
     def forward(self, x: float) -> float:
         return self.amplitude * math.sin(x + self.phase)
-    
-    def derivative(self, x: float) -> float:  # NEW
+
+    def derivative(self, x: float) -> float:
         return self.amplitude * math.cos(x + self.phase)
-    
-    def inverse(self, y: float, branch: str = 'principal', 
+
+    def inverse(self, y: float, branch: Optional[str] = None, 
                 guess: Optional[float] = None) -> float:
-        """Branch passed explicitly, not stored"""
-        if branch not in ['principal', 'supplementary']:
-            raise ValueError(f"Invalid branch: {branch}")
+        """Branch passed explicitly, defaults to self.branch"""
+        active_branch = branch if branch is not None else self.branch
+        
+        if active_branch not in ['principal', 'supplementary']:
+            raise ValueError(f"Invalid branch: {active_branch} ")
         if abs(y) > abs(self.amplitude):
-            raise ValueError(f"y={y} outside amplitude range")
+            raise ValueError(f"y={y} outside amplitude range ")
         
         raw = math.asin(y / self.amplitude) - self.phase
-        if branch == 'principal':
+        if active_branch == 'principal':
             return raw
         return math.pi - raw
-    
+
+    @property
     def available_branches(self) -> list[str]:
         return ['principal', 'supplementary']
-    
+
     def period(self) -> float:
         return 2 * math.pi
-    
+
     def normalize(self, x: float) -> float:
         return x % (2 * math.pi)
-
 
 @dataclass
 class EccentricCam:
@@ -892,29 +927,27 @@ class EccentricCam:
     y = e*cos(θ) + sqrt(r² - (e*sin(θ))²)
     forward:  cam rotation angle -> follower displacement
     inverse:  follower displacement -> cam angle (Newton-Raphson)
-
     No closed form inverse — is_analytically_invertible = False
     theta_guess seeds the solver — instance state, selects branch
-
-    input_unit:  ANGLE
-    output_unit: LENGTH
     """
     eccentricity:    float
     follower_radius: float
     branch:          str   = 'principal'
     theta_guess:     float = 0.0
+    is_analytically_invertible: bool = False
+    is_monotonic: bool = False
 
     def __post_init__(self):
-        if self.eccentricity <= 0:
-            raise ValueError("Eccentricity must be positive")
-        if self.follower_radius <= self.eccentricity:
+        if self.eccentricity  <= 0:
+            raise ValueError("Eccentricity must be positive ")
+        if self.follower_radius  <= self.eccentricity:
             raise ValueError(
-                "Follower radius must exceed eccentricity — "
-                "otherwise cam exceeds follower range"
+                "Follower radius must exceed eccentricity —  "
+                "otherwise cam exceeds follower range "
             )
         if self.branch not in self.available_branches:
             raise ValueError(
-                f"branch must be one of {self.available_branches}"
+                f"branch must be one of {self.available_branches} "
             )
         self.domain = Domain(
             min=self.follower_radius - self.eccentricity,
@@ -931,10 +964,6 @@ class EccentricCam:
     def is_invertible(self) -> bool:
         return True
 
-    @property
-    def is_analytically_invertible(self) -> bool:
-        return False  # Newton-Raphson required
-
     def _derivative(self, x: float) -> float:
         """Analytical derivative of forward — used by Newton-Raphson"""
         e, r = self.eccentricity, self.follower_radius
@@ -946,38 +975,41 @@ class EccentricCam:
             / math.sqrt(r**2 - (e * sin_x)**2)
         )
 
+    def derivative(self, x: float) -> float:
+        """Public derivative required by Primitive protocol"""
+        return self._derivative(x)
+
     def forward(self, x: float) -> float:
         """Cam rotation angle (radians) -> follower displacement"""
         e, r = self.eccentricity, self.follower_radius
         return e * math.cos(x) + math.sqrt(r**2 - (e * math.sin(x))**2)
-    
-    def inverse(self, y: float, branch: str, guess: Optional[float] = None) -> float:
+
+    def inverse(self, y: float, branch: Optional[str] = None, 
+                guess: Optional[float] = None) -> float:
         """
         Follower displacement -> cam rotation angle via Newton-Raphson.
-        
-        CRITICAL: Must constrain iteration to branch region to prevent
-        convergence to the wrong symmetric solution.
-        
-        EccentricCam forward is symmetric: forward(θ) == forward(2π - θ)
-        Branch selection determines which of the two solutions is returned.
+        Uses active_branch to constrain iteration.
         """
+        active_branch = branch if branch is not None else self.branch
+        active_guess = guess if guess is not None else self.theta_guess
+
         # 1. Domain check FIRST — before any math
         if not self.domain.contains(y):
             raise ValueError(
-                f"y={y} outside domain [{self.domain.min}, {self.domain.max}]"
+                f"y={y} outside domain [{self.domain.min}, {self.domain.max}] "
             )
         
         # 2. Check for extrema — derivative is zero at min/max displacement
         #    At these points, only one solution exists (θ=0 or θ=π)
-        if abs(y - self.domain.max) < MechanicalLimits.TOLERANCE: # was 'self.domain.tolerance'
+        if abs(y - self.domain.max)  < MechanicalLimits.TOLERANCE:
             return 0.0  # Maximum displacement at θ=0
-        if abs(y - self.domain.min) < MechanicalLimits.TOLERANCE: # was 'self.domain.tolerance'
+        if abs(y - self.domain.min)  < MechanicalLimits.TOLERANCE:
             return math.pi  # Minimum displacement at θ=π
         
         # 3. Seed to correct branch region
-        if self.theta_guess != 0.0:
-            theta = self.theta_guess
-        elif self.branch == 'principal':
+        if active_guess != 0.0:
+            theta = active_guess
+        elif active_branch == 'principal':
             # Principal branch: [0, π] — peak at θ=0
             theta = 0.5  # Seed away from extrema
         else:  # supplementary
@@ -989,11 +1021,11 @@ class EccentricCam:
             deriv = self._derivative(theta)
             
             # Handle near-zero derivative — project to nearest branch boundary
-            if abs(deriv) < 1e-12:
-                if self.branch == 'principal':
-                    theta = 0.0 if theta < math.pi else math.pi
+            if abs(deriv)  < 1e-12:
+                if active_branch == 'principal':
+                    theta = 0.0 if theta  < math.pi else math.pi
                 else:
-                    theta = math.pi if theta < 1.5 * math.pi else 2 * math.pi
+                    theta = math.pi if theta  < 1.5 * math.pi else 2 * math.pi
                 break
             
             delta = (self.forward(theta) - y) / deriv
@@ -1006,7 +1038,7 @@ class EccentricCam:
             theta -= delta
             
             # 6. Project theta back to branch region if it escapes
-            if self.branch == 'principal':
+            if active_branch == 'principal':
                 # Keep in [0, π]
                 theta = max(0.0, min(math.pi, theta))
             else:
@@ -1014,25 +1046,24 @@ class EccentricCam:
                 theta = max(math.pi, min(2 * math.pi, theta))
             
             # 7. Convergence check
-            if abs(delta) < 1e-10:
+            if abs(delta)  < 1e-10:
                 return self.normalize(theta)
         
         # 8. Final validation — ensure forward(inverse(y)) ≈ y
         result = self.normalize(theta)
-        if abs(self.forward(result) - y) > 1e-6:
+        if abs(self.forward(result)  - y)  > 1e-6:
             raise ValueError(
-                f"Newton-Raphson converged but forward(result)={self.forward(result)} "
-                f"does not match y={y} — try different theta_guess"
+                f"Newton-Raphson converged but forward(result)={self.forward(result)}  "
+                f"does not match y={y} — try different theta_guess "
             )
         
         return result
-    
+
     def period(self) -> float:
         return 2 * math.pi
 
     def normalize(self, x: float) -> float:
         return x % (2 * math.pi)
-
 
 @dataclass
 class CrankSlider:
@@ -1041,30 +1072,28 @@ class CrankSlider:
     y = r*cos(θ) + sqrt(L² - (r*sin(θ))²)
     forward:  crank angle -> slider position
     inverse:  slider position -> crank angle (Newton-Raphson)
-
     No closed form inverse — is_analytically_invertible = False
     theta_guess seeds the solver — instance state, selects branch
     approximate() available for L >> r regime — not part of protocol
-
-    input_unit:  ANGLE
-    output_unit: LENGTH
     """
     crank_length: float
     rod_length:   float
     branch:       str   = 'principal'
     theta_guess:  float = 0.0
+    is_analytically_invertible: bool = False
+    is_monotonic: bool = False
 
     def __post_init__(self):
-        if self.crank_length <= 0:
-            raise ValueError("Crank length must be positive")
-        if self.rod_length <= self.crank_length:
+        if self.crank_length  <= 0:
+            raise ValueError("Crank length must be positive ")
+        if self.rod_length  <= self.crank_length:
             raise ValueError(
-                "Rod length must exceed crank length — "
-                "otherwise slider cannot complete full rotation"
+                "Rod length must exceed crank length —  "
+                "otherwise slider cannot complete full rotation "
             )
         if self.branch not in self.available_branches:
             raise ValueError(
-                f"branch must be one of {self.available_branches}"
+                f"branch must be one of {self.available_branches} "
             )
         self.domain = Domain(
             min=self.rod_length - self.crank_length,
@@ -1081,10 +1110,6 @@ class CrankSlider:
     def is_invertible(self) -> bool:
         return True
 
-    @property
-    def is_analytically_invertible(self) -> bool:
-        return False  # Newton-Raphson required
-
     def _derivative(self, x: float) -> float:
         """Analytical derivative of forward — used by Newton-Raphson"""
         r, L = self.crank_length, self.rod_length
@@ -1096,40 +1121,42 @@ class CrankSlider:
             / math.sqrt(L**2 - (r * sin_x)**2)
         )
 
+    def derivative(self, x: float) -> float:
+        """Public derivative required by Primitive protocol"""
+        return self._derivative(x)
+
     def forward(self, x: float) -> float:
         """Crank angle (radians) -> slider position"""
         r, L = self.crank_length, self.rod_length
         return r * math.cos(x) + math.sqrt(L**2 - (r * math.sin(x))**2)
 
-    def inverse(self, y: float, branch: str, guess: Optional[float] = None) -> float:
+    def inverse(self, y: float, branch: Optional[str] = None, 
+                guess: Optional[float] = None) -> float:
         """
         Slider position -> crank angle via Newton-Raphson.
-
-        CrankSlider forward is symmetric: forward(θ) == forward(2π - θ)
-        Branch region constrains iteration — prevents convergence to wrong solution.
-
-        Correctness criterion: forward(inverse(y)) == y within branch region
-        Not: inverse(forward(x)) == x  (not guaranteed due to symmetry)
+        Uses active_branch to constrain iteration.
         """
-        
+        active_branch = branch if branch is not None else self.branch
+        active_guess = guess if guess is not None else self.theta_guess
+
         # 1. Domain check first — before any math
         if not self.domain.contains(y):
             raise ValueError(
-                f"y={y} outside domain "
-                f"[{self.domain.min}, {self.domain.max}]"
+                f"y={y} outside domain  "
+                f"[{self.domain.min}, {self.domain.max}] "
             )
 
         # 2. Extrema bypass — derivative is zero at max/min displacement
         #    Only one solution exists at these points
-        if abs(y - self.domain.max) < MechanicalLimits.TOLERANCE:
+        if abs(y - self.domain.max)  < MechanicalLimits.TOLERANCE:
             return 0.0       # Maximum displacement at θ=0
-        if abs(y - self.domain.min) < MechanicalLimits.TOLERANCE:
+        if abs(y - self.domain.min)  < MechanicalLimits.TOLERANCE:
             return math.pi   # Minimum displacement at θ=π
 
         # 3. Seed to correct branch region
-        if self.theta_guess != 0.0:
-            theta = self.theta_guess
-        elif self.branch == 'principal':
+        if active_guess != 0.0:
+            theta = active_guess
+        elif active_branch == 'principal':
             theta = 0.5              # Seeds into [0, π]
         else:
             theta = math.pi + 0.5   # Seeds into [π, 2π]
@@ -1138,10 +1165,10 @@ class CrankSlider:
         for _ in range(100):
             deriv = self._derivative(theta)
 
-            if abs(deriv) < 1e-12:
+            if abs(deriv)  < 1e-12:
                 raise ValueError(
-                    f"Newton-Raphson derivative near zero at theta={theta} "
-                    f"— try a different theta_guess"
+                    f"Newton-Raphson derivative near zero at theta={theta}  "
+                    f"— try a different theta_guess "
                 )
 
             delta = (self.forward(theta) - y) / deriv
@@ -1153,21 +1180,21 @@ class CrankSlider:
             theta -= delta
 
             # 6. Clamp to branch region — iteration cannot escape
-            if self.branch == 'principal':
+            if active_branch == 'principal':
                 theta = max(0.0, min(math.pi, theta))
             else:
                 theta = max(math.pi, min(2 * math.pi, theta))
 
             # 7. Convergence check
-            if abs(delta) < 1e-10:
+            if abs(delta)  < 1e-10:
                 return self.normalize(theta)
 
         # 8. Final validation
         result = self.normalize(theta)
-        if abs(self.forward(result) - y) > 1e-6:
+        if abs(self.forward(result) - y)  > 1e-6:
             raise ValueError(
-                f"Newton-Raphson converged but forward(result)={self.forward(result)} "
-                f"does not match y={y} — try different theta_guess"
+                f"Newton-Raphson converged but forward(result)={self.forward(result)}  "
+                f"does not match y={y} — try different theta_guess "
             )
         return result
 
@@ -1186,7 +1213,6 @@ class CrankSlider:
     def normalize(self, x: float) -> float:
         return x % (2 * math.pi)
 
-
 @dataclass
 class HookesJoint:
     """
@@ -1194,7 +1220,6 @@ class HookesJoint:
     tan(θ_out) = cos(α) * tan(θ_in)
     forward:  input shaft angle -> output shaft angle
     inverse:  output shaft angle -> input shaft angle
-
     Fully invertible within period — PeriodicBijective
     No branch selection needed — inverse is same form, reciprocal cos(α)
     Analytical inverse — is_analytically_invertible = True
@@ -1208,12 +1233,15 @@ class HookesJoint:
     shaft_angle: float
     # Add the required field for PeriodicBijective protocol
     is_analytically_invertible: bool = True  # Fixed value for this mechanism
+    branch: str = 'none'
+    theta_guess: float = 0.0
+    is_monotonic: bool = False
 
     def __post_init__(self):
-        if not (0 <= self.shaft_angle < math.pi / 2):
+        if not (0  <= self.shaft_angle  < math.pi / 2):
             raise ValueError(
-                "Shaft angle must be in [0, π/2) — "
-                "at π/2 the joint locks (cos=0)"
+                "Shaft angle must be in [0, π/2) —  "
+                "at π/2 the joint locks (cos=0) "
             )
         self.domain = Domain(
             input_unit=Dimension.ANGLE,
@@ -1225,21 +1253,8 @@ class HookesJoint:
         return True
 
     @property
-    def is_monotonic(self) -> bool:
-        # HookesJoint is not monotonic over full period due to velocity fluctuation
-        return False
-
-    @property
-    def branch(self) -> str:
-        return 'none'  # PeriodicBijective — no branch needed
-
-    @property
     def available_branches(self) -> list[str]:
         return ['none']
-
-    @property
-    def theta_guess(self) -> float:
-        return 0.0  # not used — analytical inverse
 
     def forward(self, x: float) -> float:
         """Input shaft angle (radians) -> output shaft angle (radians)"""
@@ -1289,17 +1304,34 @@ class HookesJoint:
     def normalize(self, x: float) -> float:
         return x % (2 * math.pi)
 
-# ============================================================================
-# Immutable Chain Builder
-# ============================================================================
+"""
+============================================================================
+Immutable Chain Builder
+============================================================================
 
+example:
+
+wrist_actuator = (ChainBuilder()
+        .add(SpurGear, ratio=2.5)                     # Motor gearbox: 2.5x speed reduction
+        .add(HookesJoint, shaft_angle=0.3)            # Angled transmission (≈17°)
+        .add(RackAndPinion, pitch_radius=0.1)         # Convert rotation to linear motion
+        .add_governor(min_val=-2.0, max_val=2.0)      # Safety limits: ±2cm travel
+        .build()) 
+
+motor_angle = 1.5  # radians
+actuator_position = wrist_actuator.forward(motor_angle)
+
+print(f"-> wrist_actuator.forward({motor_angle})")
+print(f"    Motor at {motor_angle}rad → Actuator at {actuator_position:.3f}m")
+
+"""
 class ChainBuilder:
     """
     Each operation returns a NEW builder.
     """
     def __init__(self, primitives: tuple[Primitive, ...] = ()):
         self._primitives = primitives
-    
+
     def add(self, primitive_class, **kwargs) -> 'ChainBuilder':
         """Add a primitive, returning NEW builder"""
         new_primitive = primitive_class(**kwargs)
@@ -1310,31 +1342,31 @@ class ChainBuilder:
             if not self._units_compatible(last.domain.output_unit, 
                                           new_primitive.domain.input_unit):
                 raise DimensionMismatchError(
-                    f"Cannot add {primitive_class.__name__}: "
-                    f"expects {new_primitive.domain.input_unit} but "
-                    f"previous stage outputs {last.domain.output_unit}"
+                    f"Cannot add {primitive_class.__name__}:  "
+                    f"expects {new_primitive.domain.input_unit} but  "
+                    f"previous stage outputs {last.domain.output_unit} "
                 )
         
         return ChainBuilder(self._primitives + (new_primitive,))
-    
+
     def add_governor(self, min_val: float, max_val: float, 
-                     hysteresis: float = 0.0) -> 'ChainBuilder':
+                     hysteresis: float = 0.0)  -> 'ChainBuilder':
         """Wrap last primitive in Governor"""
         if not self._primitives:
-            raise ValueError("Cannot add governor to empty chain")
+            raise ValueError("Cannot add governor to empty chain ")
         
         last = self._primitives[-1]
         governor = Governor(last, min_val, max_val, hysteresis)
         
         # Replace last primitive with governor
         return ChainBuilder(self._primitives[:-1] + (governor,))
-    
+
     def build(self) -> CompositePrimitive:
         """Create immutable composite"""
         if not self._primitives:
-            raise ValueError("Cannot build empty chain")
+            raise ValueError("Cannot build empty chain ")
         return CompositePrimitive(self._primitives)
-    
+
     @staticmethod
     def _units_compatible(out_unit: Dimension, in_unit: Dimension) -> bool:
         if out_unit == Dimension.GENERIC or in_unit == Dimension.GENERIC:
