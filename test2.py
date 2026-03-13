@@ -5,7 +5,7 @@ Test suite for Mechanical Motion Primitives Class II
 
 import pytest
 import math
-from mmpv3 import *
+from mmp import *
 
 
 # ============================================================================
@@ -571,4 +571,5 @@ def test_class2_domains():
 # ============================================================================
 
 if __name__ == "__main__":
+
     pytest.main([__file__, "-v"])
