@@ -268,8 +268,14 @@ class CompositePrimitive:
     def forward(self, x: float) -> float:
         """Apply chain forward with input validation warning"""
         if not self._input_domain.contains(x):
-            import warnings
-            warnings.warn(f"Input {x} outside recommended domain {self._input_domain} ")
+            #import warnings
+            #warnings.warn(f"Input {x} outside recommended domain {self._input_domain} ")
+            print(f"### Warning:")
+            print(f"# CompositePrimitive.forward({x})")
+            print(f"#     -> input {x} outside recommended domain")
+            print(f"# Domain: {self._input_domain}")
+            
+            print()
         
         result = x
         for p in self.primitives:
@@ -330,56 +336,141 @@ class CompositePrimitive:
         """
         Back-propagate constraints to find valid input range.
         
-        This is the most restrictive interpretation: what inputs
-        keep ALL intermediate values within their respective domains?
+        This finds the set of input values x such that for every stage i,
+        the intermediate value after i-1 stages lies within stage i's input domain.
+        
+        Returns a Domain with min/max representing the tightest achievable bounds,
+        or unbounded (None) where constraints don't exist.
         """
         if not self.primitives:
             return Domain(input_unit=Dimension.GENERIC, output_unit=Dimension.GENERIC)
         
         # Start with the first primitive's input domain
-        min_x  = self.primitives[0].domain.min
-        max_x = self.primitives[0].domain.max
+        current_min = self.primitives[0].domain.min
+        current_max = self.primitives[0].domain.max
         
-        # Track cumulative mapping to later stages
-        cumulative_forward = lambda x: x
-        current_primitive_index = 0
+        # Track the cumulative forward mapping to check intermediate values
+        # For each subsequent primitive, we need to ensure its input constraints
+        # are satisfied by the output of previous stages
         
         for i, p in enumerate(self.primitives[1:], start=1):
-            # For each subsequent primitive, we need to ensure that
-            # the output of previous stages  falls within p's input domain
+            # If this primitive has no input constraints, skip
+            if p.domain.min is None and p.domain.max is None:
+                continue
+                
+            # We need to find what initial x values produce inputs to p
+            # that satisfy p.domain.contains(...)
             
-            if p.domain.min is not None or p.domain.max is not None:
-                # This primitive has input constraints
-                # We need to  find what initial x values produce inputs to p
-                # that satisfy p.domain.contains(...)
+            # Build the prefix chain that maps x -> input to current primitive
+            prefix = self.primitives[:i]
+            
+            # Check if we can invert this prefix to find constraint boundaries
+            all_invertible = all(getattr(pp, 'is_invertible', False) for pp in prefix)
+            
+            if all_invertible and all(isinstance(pp, Invertible) for pp in prefix):
+                # We can directly compute constraints by inverting through the chain
+                constraints = []
                 
-                # Build function that maps x -> input to current primitive
-                def map_to_stage_i(x_val):
-                    val = x_val
-                    for j in range(i):  # Apply all primitives up to i-1
-                        val = self.primitives[j].forward(val)
-                    return val
-                
-                # If we have bounds, we need to invert them through the chain
-                if p.is_invertible and p.domain.min is not None:
-                    # Find x such that map_to_stage_i(x) = p.domain.min
-                    # This requires inverting the chain up to i-1
+                if p.domain.min is not None:
                     try:
-                        # This is complex - we'd need the inverse of the prefix chain
-                        # For now, we'll use a simpler approach: sample and bound
+                        # Find x such that prefix(x) = p.domain.min
+                        # Work backwards through the prefix
+                        y = p.domain.min
+                        for pp in reversed(prefix):
+                            if hasattr(pp, 'inverse'):
+                                y = pp.inverse(y)
+                            else:
+                                raise ValueError(f"Primitive {pp} claims invertible but lacks inverse")
+                        constraints.append(y)
+                    except (ValueError, DomainViolationError, InverseUndefinedError):
+                        # Can't invert through this chain - fall back to sampling
                         pass
-                    except:
+                        
+                if p.domain.max is not None:
+                    try:
+                        y = p.domain.max
+                        for pp in reversed(prefix):
+                            if hasattr(pp, 'inverse'):
+                                y = pp.inverse(y)
+                            else:
+                                raise ValueError(f"Primitive {pp} claims invertible but lacks inverse")
+                        constraints.append(y)
+                    except (ValueError, DomainViolationError, InverseUndefinedError):
                         pass
+                
+                if constraints:
+                    new_min = min(constraints)
+                    new_max = max(constraints)
+                    
+                    # Intersect with current bounds
+                    if current_min is not None:
+                        current_min = max(current_min, new_min)
+                    else:
+                        current_min = new_min
+                        
+                    if current_max is not None:
+                        current_max = min(current_max, new_max)
+                    else:
+                        current_max = new_max
+                        
+                    # If intersection is empty, chain is impossible
+                    if current_min is not None and current_max is not None:
+                        if current_min > current_max + MechanicalLimits.TOLERANCE:
+                            # Return an empty domain (min > max signals impossibility)
+                            return Domain(
+                                min=float('inf'),
+                                max=-float('inf'),
+                                input_unit=self.primitives[0].domain.input_unit,
+                                output_unit=self.primitives[0].domain.output_unit
+                            )
             
-            # Update cumulative mapping
-            # This is a placeholder - full implementation would need
-            # proper constraint propagation
-            
-        # For now, return a simplified domain based on first primitive
-        # and last primitive's output bounds
+            # If we can't invert analytically, use conservative sampling
+            # This is a fallback for non-invertible chains or complex constraints
+            if not all_invertible or not constraints:
+                # Sample the current input range to find feasible region
+                sample_points = self._generate_sample_points(current_min, current_max)
+                feasible_inputs = []
+                
+                for x in sample_points:
+                    try:
+                        # Compute intermediate value at stage i
+                        val = x
+                        for j in range(i):
+                            val = self.primitives[j].forward(val)
+                        
+                        # Check if it satisfies current primitive's input domain
+                        if p.domain.contains(val):
+                            feasible_inputs.append(x)
+                    except Exception:
+                        # If forward fails, this point is invalid
+                        continue
+                
+                if feasible_inputs:
+                    new_min = min(feasible_inputs)
+                    new_max = max(feasible_inputs)
+                    
+                    # Update bounds
+                    if current_min is not None:
+                        current_min = max(current_min, new_min)
+                    else:
+                        current_min = new_min
+                        
+                    if current_max is not None:
+                        current_max = min(current_max, new_max)
+                    else:
+                        current_max = new_max
+                else:
+                    # No feasible inputs found - chain is impossible
+                    return Domain(
+                        min=float('inf'),
+                        max=-float('inf'),
+                        input_unit=self.primitives[0].domain.input_unit,
+                        output_unit=self.primitives[0].domain.output_unit
+                    )
+        
         return Domain(
-            min=min_x,
-            max=max_x,
+            min=None if current_min in (None, float('inf'), -float('inf')) else current_min,
+            max=None if current_max in (None, float('inf'), -float('inf')) else current_max,
             input_unit=self.primitives[0].domain.input_unit,
             output_unit=self.primitives[0].domain.output_unit
         )
@@ -389,106 +480,92 @@ class CompositePrimitive:
         Forward-propagate to find achievable output range.
         
         This tells you what output values the chain can actually produce
-        given that all intermediate stages must stay  within their domains.
+        given that all intermediate stages must stay within their domains.
         """
         if not self.primitives:
             return Domain(input_unit=Dimension.GENERIC, output_unit=Dimension.GENERIC)
         
-        # Start with the last primitive's declared output domain
-        # This is the simplest bound: the chain cannot output values
-        # that the final primitive cannot produce
-        last = self.primitives[-1]
-        min_y = last.domain.min
-        max_y =  last.domain.max
+        # Start with the first primitive's input domain
+        current_min = self.primitives[0].domain.min
+        current_max = self.primitives[0].domain.max
         
-        # But we must also consider that intermediate constraints might
-        # further restrict what the last primitive can actually receive as input
+        # If first stage has unbounded input, we can't bound output
+        if current_min is None or current_max is None:
+            # Use mechanical limits as conservative bounds
+            current_min = -MechanicalLimits.MAX_ANGLE
+            current_max = MechanicalLimits.MAX_ANGLE
         
-        # For each primitive, we need to ensure its input domain is satisfiable
-        # given the outputs of previous stages
-        
-        # Track the achievable range after each stage
-        achievable_min = None
-        achievable_max = None
-        
+        # Propagate through each stage
         for i, p in enumerate(self.primitives):
-            if i == 0:
-                # First stage's output range is its forward mapping
-                # applied to its full input domain
-                if p.domain.min is not None and p.domain.max is not None:
-                    # If input domain is bounded, we can compute output range 
-                    # by evaluating at endpoints (assuming monotonicity)
-                    try:
-                        y_min = p.forward(p.domain.min)
-                        y_max = p.forward(p.domain.max)
-                        achievable_min = min(y_min, y_max)
-                        achievable_max = max(y_min, y_max)
-                    except:
-                        # Non-monotonic - would need sampling
-                        achievable_min = p.domain.min  # Conservative: use input bounds
-                        achievable_max = p.domain.max
+            # Map current input bounds through this stage
+            try:
+                # For monotonic primitives, min/max occur at input bounds
+                if getattr(p, 'is_monotonic', False):
+                    y_min = p.forward(current_min)
+                    y_max = p.forward(current_max)
+                    current_min = min(y_min, y_max)
+                    current_max = max(y_min, y_max)
                 else:
-                    # Unbounded input - output range is primitive's declared output bounds
-                    achievable_min = p.domain.min
-                    achievable_max = p.domain.max
-            else:
-                # Subsequent stages: we need the intersection of:
-                # 1. What this stage can accept (its input domain)
-                # 2. What previous stage can produce (achievable range)
-                # Then map that through this stage's forward function
-                
-                if achievable_min is None or achievable_max is None:
-                    # Previous stage unbounded - use this stage's input domain
-                    stage_input_min = p.domain.min
-                    stage_input_max = p.domain.max
-                else:
-                    # Previous stage bounded - intersect with this stage's input domain
-                    stage_input_min = achievable_min
-                    if p.domain.min is not None:
-                        stage_input_min = max(stage_input_min, p.domain.min)
+                    # For non-monotonic, we need to sample
+                    samples = self._generate_sample_points(current_min, current_max, num_samples=50)
+                    outputs = [p.forward(x) for x in samples if self._input_feasible(x, i)]
                     
-                    stage_input_max = achievable_max
-                    if p.domain.max is not None:
-                        stage_input_max = min(stage_input_max, p.domain.max)
-                
-                # If intersection is empty, chain is impossible
-                if stage_input_min is not None and stage_input_max is not None:
-                    if stage_input_min  > stage_input_max:
-                        # This chain cannot produce any valid output
-                        achievable_min = float('inf')
-                        achievable_max = -float('inf')
-                        break
-                
-                # Map valid input range through this stage
-                if stage_input_min is not None and stage_input_max is not None:
-                    # Evaluate at endpoints (assuming monotonicity)
-                    try:
-                        y_min = p.forward(stage_input_min)
-                        y_max = p.forward(stage_input_max)
-                        achievable_min = min(y_min, y_max)
-                        achievable_max = max(y_min, y_max)
-                    except:
-                        # Non-monotonic  - fall back to primitive's declared bounds
-                        achievable_min = p.domain.min
-                        achievable_max = p.domain.max
-                else:
-                    # Can't bound input - use primitive's declared output bounds
-                    achievable_min = p.domain.min
-                    achievable_max = p.domain.max
+                    if outputs:
+                        current_min = min(outputs)
+                        current_max = max(outputs)
+                    else:
+                        # No feasible outputs - chain impossible
+                        return Domain(
+                            min=float('inf'),
+                            max=-float('inf'),
+                            input_unit=self.primitives[0].domain.input_unit,
+                            output_unit=self.primitives[-1].domain.output_unit
+                        )
+            except Exception:
+                # If forward fails, we can't bound this stage
+                # Fall back to primitive's declared output bounds
+                if p.domain.min is not None:
+                    current_min = max(current_min, p.domain.min) if current_min is not None else p.domain.min
+                if p.domain.max is not None:
+                    current_max = min(current_max, p.domain.max) if current_max is not None else p.domain.max
         
-        # Final achievable range is what we computed
-        # But ensure it's not wider than last primitive's declared output bounds
-        if last.domain.min is not None and achievable_min is not None:
-            achievable_min = max(achievable_min, last.domain.min)
-        if last.domain.max is not None and achievable_max is not None:
-            achievable_max = min(achievable_max, last.domain.max)
-            
+        # Ensure we don't exceed last primitive's declared output bounds
+        last = self.primitives[-1]
+        if last.domain.min is not None:
+            current_min = max(current_min, last.domain.min) if current_min is not None else last.domain.min
+        if last.domain.max is not None:
+            current_max = min(current_max, last.domain.max) if current_max is not None else last.domain.max
+        
+        # Check if bounds are valid
+        if current_min is not None and current_max is not None:
+            if current_min > current_max + MechanicalLimits.TOLERANCE:
+                return Domain(
+                    min=float('inf'),
+                    max=-float('inf'),
+                    input_unit=self.primitives[0].domain.input_unit,
+                    output_unit=self.primitives[-1].domain.output_unit
+                )
+        
         return Domain(
-            min=None if achievable_min in (None, float('inf'), -float('inf')) else achievable_min,
-            max=None if achievable_max in (None, float('inf'), -float('inf')) else achievable_max,
+            min=None if current_min in (None, float('inf'), -float('inf')) else current_min,
+            max=None if current_max in (None, float('inf'), -float('inf')) else current_max,
             input_unit=self.primitives[0].domain.input_unit,
-            output_unit=last.domain.output_unit
+            output_unit=self.primitives[-1].domain.output_unit
         )
+
+    def _input_feasible(self, x: float, up_to_stage: int) -> bool:
+        """Check if input x produces valid intermediate values for all stages up to up_to_stage."""
+        try:
+            val = x
+            for i in range(up_to_stage + 1):
+                p = self.primitives[i]
+                # Check if this value is valid for current stage's input
+                if not p.domain.contains(val):
+                    return False
+                val = p.forward(val)
+            return True
+        except Exception:
+            return False
 
     def _compute_period(self) -> Optional[float]:
         """Return period if all primitives share the exact same period."""
@@ -1265,7 +1342,7 @@ class HookesJoint:
     #        math.sin(y) / math.cos(self.shaft_angle),
     #        math.cos(y)
     #    )
-      forward() and inverse() are problematic it uses atan2 which is bounded to [-π, π],
+      forward() and inverse are problematic it uses atan2 which is bounded to (-π, π],
       so as input sweeps continuously past ±π/2 the output discontinuously wraps.
     
       The actual Hooke's joint equation is:
@@ -1393,4 +1470,3 @@ class ChainBuilder:
         if out_unit == Dimension.GENERIC or in_unit == Dimension.GENERIC:
             return True
         return out_unit == in_unit
-
