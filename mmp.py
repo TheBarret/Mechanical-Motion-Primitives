@@ -1,28 +1,22 @@
 from __future__ import annotations
-
 """
 Mechanical Motion Primitives
-
-
 Behavioral classification-based implementation of mechanical-to-mathematical mappings
 env: Python 3.10.10
 """
+
 import math
-import random
-import hashlib
-from math           import gcd
-from fractions      import Fraction
 from abc            import ABC, abstractmethod
 from dataclasses    import dataclass, field
 from typing         import Protocol, Tuple, Optional, Callable, Any
 from typing         import runtime_checkable
 from enum           import Enum, auto
 
-'''
+"""
 ============================================================================
 CORE: MECHANICAL LIMITS - Physical constants
 ============================================================================
-'''
+"""
 
 class Dimension(Enum):
     ANGLE        = auto()   # radians
@@ -31,13 +25,13 @@ class Dimension(Enum):
     VELOCITY     = auto()   # rad/s or m/s — context dependent
     GENERIC      = auto()   # unknown/any — use sparingly
 
-'''
+"""
 ============================================================================
 CORE: DOMAIN
 Geometric truth — what a primitive can physically produce or accept
 None implies unbounded (±inf)
 ============================================================================
-'''
+"""
 
 @dataclass(frozen=True)
 class Domain:
@@ -63,13 +57,13 @@ class Domain:
     def is_finite(self) -> bool:
         return self.min is not None and self.max is not None
 
-'''
+"""
 ============================================================================
 CORE: MECHANICAL LIMITS
 Compositor-level sanity thresholds — warning triggers, not hard walls
 Nothing physical exceeds these — if it does, it is a bug in the caller
 ============================================================================
-'''
+"""
 
 class MechanicalLimits:
     MAX_ANGLE        = 4 * math.pi   # two full rotations
@@ -78,7 +72,7 @@ class MechanicalLimits:
     MAX_VELOCITY     = 1e4           # 10,000 rad/s — jet turbine territory
     TOLERANCE        = 1e-9          # float drift forgiveness
 
-'''
+"""
 ============================================================================
 CORE: PROTOCOLS
 ============================================================================
@@ -89,7 +83,7 @@ CORE: PROTOCOLS
  Periodic           → float → float cyclic   (Class II)
  Configurable       → mode switching         (Class III)
  VectorPrimitive    → DEFERRED               (Class VII)
-'''
+"""
 
 @runtime_checkable
 class Primitive(Protocol):
@@ -191,11 +185,11 @@ class PeriodicBranchDependent(Periodic, Invertible, Protocol):
     @property
     def available_branches(self) -> list[str]: ...
     
-''' 
+""" 
     ============================================================================
     CORE: EXCEPTIONS
     ============================================================================
-''' 
+""" 
 
 class MMPError(Exception):
     """Base exception for all MMP errors"""
@@ -212,11 +206,11 @@ class DomainViolationError(CompositionError):
 class InverseUndefinedError(MMPError):
     """Inverse requested on a non-invertible or lossy chain"""
     
-'''
+"""
 ============================================================================
 CORE: Composite Primitive
 ============================================================================
-'''
+"""
 
 @dataclass(frozen=True)
 class CompositePrimitive:
@@ -235,7 +229,6 @@ class CompositePrimitive:
                 raise DimensionMismatchError(
                     f"Stage {i} output {out_unit} != Stage {i+1} input {in_unit} "
                 )
-        
         # Compute and store derived properties
         object.__setattr__(self, '_input_domain', self._compute_input_domain())
         object.__setattr__(self, '_output_domain', self._compute_output_domain())
@@ -250,7 +243,7 @@ class CompositePrimitive:
             input_unit=self.primitives[0].domain.input_unit,
             output_unit=self.primitives[-1].domain.output_unit
         )
-    
+
     @property
     def is_invertible(self) -> bool:
         return all(p.is_invertible for p in self.primitives)
@@ -268,15 +261,7 @@ class CompositePrimitive:
     def forward(self, x: float) -> float:
         """Apply chain forward with input validation warning"""
         if not self._input_domain.contains(x):
-            #import warnings
-            #warnings.warn(f"Input {x} outside recommended domain {self._input_domain} ")
-            #print(f"### Warning:")
-            #print(f"# CompositePrimitive.forward({x})")
-            #print(f"#     -> input {x} outside recommended domain")
-            #print(f"# Domain: {self._input_domain}")
-            #print()
-            pass
-        
+            pass # Warning suppressed per original design
         result = x
         for p in self.primitives:
             result = p.forward(result)
@@ -284,43 +269,31 @@ class CompositePrimitive:
 
     def derivative(self, x: float) -> float:
         """Chain rule: dy/dx = fₙ'(...f₂'(f₁'(x))...)"""
-        # Apply chain rule from last to first
         deriv = 1.0
         current = x
         intermediates = []
-        
         # Forward pass to get intermediate values
         for p in self.primitives:
             intermediates.append(current)
             current = p.forward(current)
-        
         # Backward pass applying derivatives
         for i, p in enumerate(reversed(self.primitives)):
             deriv *= p.derivative(intermediates[-(i+1)])
-        
         return deriv
 
     def inverse(self, y: float, branches: Optional[list[str]] = None, guesses: Optional[list[float]] = None) -> float:
         """
         Inverse with per-stage branch context.
-        branches and guesses align with primitives that need them.
-        Uses kwargs passthrough to avoid state mutation bugs.
         """
         if not self.is_invertible:
             raise InverseUndefinedError("Chain is not invertible")
-        
         result = y
         # Iterate backwards through primitives
         for i, p in enumerate(reversed(self.primitives)):
-            # Calculate original index for branch/guess lookup
             idx = len(self.primitives) - 1 - i
-            
-            # Extract specific branch/guess for this stage if provided
             branch = branches[idx] if branches and idx < len(branches) else None
             guess = guesses[idx] if guesses and idx < len(guesses) else None
-            
             if hasattr(p, 'inverse'):
-                # Pass branch/guess directly to primitive inverse
                 result = p.inverse(result, branch=branch, guess=guess)
             else:
                 raise InverseUndefinedError(
@@ -332,60 +305,61 @@ class CompositePrimitive:
         """LCM of all periodic primitives, or None if aperiodic"""
         return self._period
 
+    # ----------------------------------------------------------------------
+    # FIX 1: Added missing helper method
+    # ----------------------------------------------------------------------
+    @staticmethod
+    def _generate_sample_points(min_val: Optional[float], max_val: Optional[float], num_samples: int = 100) -> list[float]:
+        """Generate linearly spaced sample points within bounds."""
+        if min_val is None or max_val is None:
+            # Fallback for unbounded domains (use mechanical limits)
+            min_val = -MechanicalLimits.MAX_ANGLE
+            max_val = MechanicalLimits.MAX_ANGLE
+        
+        if min_val > max_val:
+            return []
+            
+        if num_samples <= 1:
+            return [(min_val + max_val) / 2] if min_val != max_val else [min_val]
+
+        step = (max_val - min_val) / (num_samples - 1)
+        return [min_val + i * step for i in range(num_samples)]
+
     def _compute_input_domain(self) -> Domain:
         """
         Back-propagate constraints to find valid input range.
-        
-        This finds the set of input values x such that for every stage i,
-        the intermediate value after i-1 stages lies within stage i's input domain.
-        
-        Returns a Domain with min/max representing the tightest achievable bounds,
-        or unbounded (None) where constraints don't exist.
+        FIX 2: Checks is_monotonic before analytic inversion.
         """
         if not self.primitives:
             return Domain(input_unit=Dimension.GENERIC, output_unit=Dimension.GENERIC)
-        
-        # Start with the first primitive's input domain
+
         current_min = self.primitives[0].domain.min
         current_max = self.primitives[0].domain.max
-        
-        # Track the cumulative forward mapping to check intermediate values
-        # For each subsequent primitive, we need to ensure its input constraints
-        # are satisfied by the output of previous stages
-        
+
         for i, p in enumerate(self.primitives[1:], start=1):
-            # If this primitive has no input constraints, skip
             if p.domain.min is None and p.domain.max is None:
                 continue
-                
-            # We need to find what initial x values produce inputs to p
-            # that satisfy p.domain.contains(...)
             
-            # Build the prefix chain that maps x -> input to current primitive
             prefix = self.primitives[:i]
             
-            # Check if we can invert this prefix to find constraint boundaries
+            # FIX: Check monotonicity. Invertible != Monotonic (e.g. ScotchYoke)
             all_invertible = all(getattr(pp, 'is_invertible', False) for pp in prefix)
-            
-            if all_invertible and all(isinstance(pp, Invertible) for pp in prefix):
-                # We can directly compute constraints by inverting through the chain
-                constraints = []
-                
+            all_monotonic = all(getattr(pp, 'is_monotonic', False) for pp in prefix)
+
+            constraints = []
+            # Only use analytic inversion if chain is BOTH invertible AND monotonic
+            if all_invertible and all_monotonic:
                 if p.domain.min is not None:
                     try:
-                        # Find x such that prefix(x) = p.domain.min
-                        # Work backwards through the prefix
                         y = p.domain.min
                         for pp in reversed(prefix):
                             if hasattr(pp, 'inverse'):
                                 y = pp.inverse(y)
                             else:
-                                raise ValueError(f"Primitive {pp} claims invertible but lacks inverse")
+                                raise ValueError(f"Primitive {pp} lacks inverse")
                         constraints.append(y)
-                    except (ValueError, DomainViolationError, InverseUndefinedError):
-                        # Can't invert through this chain - fall back to sampling
+                    except Exception:
                         pass
-                        
                 if p.domain.max is not None:
                     try:
                         y = p.domain.max
@@ -393,81 +367,51 @@ class CompositePrimitive:
                             if hasattr(pp, 'inverse'):
                                 y = pp.inverse(y)
                             else:
-                                raise ValueError(f"Primitive {pp} claims invertible but lacks inverse")
+                                raise ValueError(f"Primitive {pp} lacks inverse")
                         constraints.append(y)
-                    except (ValueError, DomainViolationError, InverseUndefinedError):
+                    except Exception:
                         pass
-                
-                if constraints:
-                    new_min = min(constraints)
-                    new_max = max(constraints)
-                    
-                    # Intersect with current bounds
-                    if current_min is not None:
-                        current_min = max(current_min, new_min)
-                    else:
-                        current_min = new_min
-                        
-                    if current_max is not None:
-                        current_max = min(current_max, new_max)
-                    else:
-                        current_max = new_max
-                        
-                    # If intersection is empty, chain is impossible
-                    if current_min is not None and current_max is not None:
-                        if current_min > current_max + MechanicalLimits.TOLERANCE:
-                            # Return an empty domain (min > max signals impossibility)
-                            return Domain(
-                                min=float('inf'),
-                                max=-float('inf'),
-                                input_unit=self.primitives[0].domain.input_unit,
-                                output_unit=self.primitives[0].domain.output_unit
-                            )
             
-            # If we can't invert analytically, use conservative sampling
-            # This is a fallback for non-invertible chains or complex constraints
-            if not all_invertible or not constraints:
-                # Sample the current input range to find feasible region
+            # If analytic failed or not monotonic, force sampling
+            if not constraints:
                 sample_points = self._generate_sample_points(current_min, current_max)
                 feasible_inputs = []
-                
                 for x in sample_points:
                     try:
-                        # Compute intermediate value at stage i
                         val = x
                         for j in range(i):
                             val = self.primitives[j].forward(val)
-                        
-                        # Check if it satisfies current primitive's input domain
                         if p.domain.contains(val):
                             feasible_inputs.append(x)
                     except Exception:
-                        # If forward fails, this point is invalid
                         continue
                 
                 if feasible_inputs:
-                    new_min = min(feasible_inputs)
-                    new_max = max(feasible_inputs)
-                    
-                    # Update bounds
-                    if current_min is not None:
-                        current_min = max(current_min, new_min)
-                    else:
-                        current_min = new_min
-                        
-                    if current_max is not None:
-                        current_max = min(current_max, new_max)
-                    else:
-                        current_max = new_max
+                    constraints = [min(feasible_inputs), max(feasible_inputs)]
                 else:
-                    # No feasible inputs found - chain is impossible
-                    return Domain(
-                        min=float('inf'),
-                        max=-float('inf'),
-                        input_unit=self.primitives[0].domain.input_unit,
-                        output_unit=self.primitives[0].domain.output_unit
-                    )
-        
+                    # No feasible inputs
+                    return Domain(min=float('inf'), max=-float('inf'),
+                                  input_unit=self.primitives[0].domain.input_unit,
+                                  output_unit=self.primitives[0].domain.output_unit)
+
+            if constraints:
+                new_min = min(constraints)
+                new_max = max(constraints)
+                if current_min is not None:
+                    current_min = max(current_min, new_min)
+                else:
+                    current_min = new_min
+                if current_max is not None:
+                    current_max = min(current_max, new_max)
+                else:
+                    current_max = new_max
+
+            if current_min is not None and current_max is not None:
+                if current_min > current_max + MechanicalLimits.TOLERANCE:
+                    return Domain(min=float('inf'), max=-float('inf'),
+                                  input_unit=self.primitives[0].domain.input_unit,
+                                  output_unit=self.primitives[0].domain.output_unit)
+
         return Domain(
             min=None if current_min in (None, float('inf'), -float('inf')) else current_min,
             max=None if current_max in (None, float('inf'), -float('inf')) else current_max,
@@ -478,74 +422,52 @@ class CompositePrimitive:
     def _compute_output_domain(self) -> Domain:
         """
         Forward-propagate to find achievable output range.
-        
-        This tells you what output values the chain can actually produce
-        given that all intermediate stages must stay within their domains.
         """
         if not self.primitives:
             return Domain(input_unit=Dimension.GENERIC, output_unit=Dimension.GENERIC)
-        
-        # Start with the first primitive's input domain
+
         current_min = self.primitives[0].domain.min
         current_max = self.primitives[0].domain.max
-        
-        # If first stage has unbounded input, we can't bound output
+
         if current_min is None or current_max is None:
-            # Use mechanical limits as conservative bounds
             current_min = -MechanicalLimits.MAX_ANGLE
             current_max = MechanicalLimits.MAX_ANGLE
-        
-        # Propagate through each stage
+
         for i, p in enumerate(self.primitives):
-            # Map current input bounds through this stage
             try:
-                # For monotonic primitives, min/max occur at input bounds
                 if getattr(p, 'is_monotonic', False):
                     y_min = p.forward(current_min)
                     y_max = p.forward(current_max)
                     current_min = min(y_min, y_max)
                     current_max = max(y_min, y_max)
                 else:
-                    # For non-monotonic, we need to sample
                     samples = self._generate_sample_points(current_min, current_max, num_samples=50)
                     outputs = [p.forward(x) for x in samples if self._input_feasible(x, i)]
-                    
                     if outputs:
                         current_min = min(outputs)
                         current_max = max(outputs)
                     else:
-                        # No feasible outputs - chain impossible
-                        return Domain(
-                            min=float('inf'),
-                            max=-float('inf'),
-                            input_unit=self.primitives[0].domain.input_unit,
-                            output_unit=self.primitives[-1].domain.output_unit
-                        )
+                        return Domain(min=float('inf'), max=-float('inf'),
+                                      input_unit=self.primitives[0].domain.input_unit,
+                                      output_unit=self.primitives[-1].domain.output_unit)
             except Exception:
-                # If forward fails, we can't bound this stage
-                # Fall back to primitive's declared output bounds
                 if p.domain.min is not None:
                     current_min = max(current_min, p.domain.min) if current_min is not None else p.domain.min
                 if p.domain.max is not None:
                     current_max = min(current_max, p.domain.max) if current_max is not None else p.domain.max
-        
-        # Ensure we don't exceed last primitive's declared output bounds
+
         last = self.primitives[-1]
         if last.domain.min is not None:
             current_min = max(current_min, last.domain.min) if current_min is not None else last.domain.min
         if last.domain.max is not None:
             current_max = min(current_max, last.domain.max) if current_max is not None else last.domain.max
-        
-        # Check if bounds are valid
+
         if current_min is not None and current_max is not None:
             if current_min > current_max + MechanicalLimits.TOLERANCE:
-                return Domain(
-                    min=float('inf'),
-                    max=-float('inf'),
-                    input_unit=self.primitives[0].domain.input_unit,
-                    output_unit=self.primitives[-1].domain.output_unit
-                )
-        
+                return Domain(min=float('inf'), max=-float('inf'),
+                              input_unit=self.primitives[0].domain.input_unit,
+                              output_unit=self.primitives[-1].domain.output_unit)
+
         return Domain(
             min=None if current_min in (None, float('inf'), -float('inf')) else current_min,
             max=None if current_max in (None, float('inf'), -float('inf')) else current_max,
@@ -559,7 +481,6 @@ class CompositePrimitive:
             val = x
             for i in range(up_to_stage + 1):
                 p = self.primitives[i]
-                # Check if this value is valid for current stage's input
                 if not p.domain.contains(val):
                     return False
                 val = p.forward(val)
@@ -575,13 +496,11 @@ class CompositePrimitive:
                 periods.add(p.period())
             else:
                 return None
-        
         if len(periods) == 1:
             return periods.pop()
         elif len(periods)  > 1:
             print("compositePrimitive._compute_period(): mixed periods detected ")
-            # Conservative: treat as aperiodic
-            return None  
+            return None
         return None
 
     @staticmethod
@@ -590,13 +509,14 @@ class CompositePrimitive:
         if out_unit == Dimension.GENERIC or in_unit == Dimension.GENERIC:
             return True
         return out_unit == in_unit
-'''
+        
+"""
 ============================================================================
 CORE: GOVERNOR
 Stack-level output clamp — wraps any Primitive
 Mechanically: centrifugal governor, pressure relief valve, torque limiter
 ============================================================================
-'''
+"""
 
 @dataclass
 class Governor:
@@ -660,14 +580,14 @@ class Governor:
             # derivative is zero (clipping)
             return 0.0
         return self.primitive.derivative(x)
-'''
+"""
 ============================================================================
 CLASS I: LINEAR SCALING (Affine Maps)
 Continuous, invertible, constant ratio
 Satisfies: Primitive, Invertible
 is_invertible: True (all Class I are bijective)
 ============================================================================
-'''
+"""
 
 @dataclass
 class SpurGear:
@@ -926,14 +846,14 @@ class OldhamCoupling:
         """dy/dx = 1 (identity mapping)"""
         return 1.0
         
-'''
+"""
     ============================================================================
     CLASS II: PERIODIC NON-LINEAR (Trigonometric)
     Oscillatory, bounded, non-injective without domain restriction
     Satisfies: Primitive, Periodic
     Subdivided: PeriodicBijective | PeriodicBranchDependent
     ============================================================================
-'''
+"""
 
 @dataclass(frozen=True)  # IMMUTABLE
 class ScotchYoke:
@@ -1289,26 +1209,15 @@ class CrankSlider:
 @dataclass
 class HookesJoint:
     """
-    Universal joint — angled shaft transmission
+    Universal joint, angled shaft transmission
     tan(θ_out) = cos(α) * tan(θ_in)
-    forward:  input shaft angle -> output shaft angle
-    inverse:  output shaft angle -> input shaft angle
-    Fully invertible within period — PeriodicBijective
-    No branch selection needed — inverse is same form, reciprocal cos(α)
-    Analytical inverse — is_analytically_invertible = True
-
-    Singularity at θ_in = π/2 + nπ — tan blows up
-    Shaft angle must be in [0, π/2) — at π/2 joint locks
-
-    input_unit:  ANGLE
-    output_unit: ANGLE
+    FIX: Uses atan2 for stability at pi/2, with unwrapping for continuity.
     """
     shaft_angle: float
-    # Add the required field for PeriodicBijective protocol
-    is_analytically_invertible: bool = True  # Fixed value for this mechanism
+    is_analytically_invertible: bool = True
     branch: str = 'none'
     theta_guess: float = 0.0
-    is_monotonic: bool = False
+    is_monotonic: bool = False  # Technically monotonic over 2pi, but velocity fluctuates
 
     def __post_init__(self):
         if not (0  <= self.shaft_angle  < math.pi / 2):
@@ -1328,73 +1237,58 @@ class HookesJoint:
     @property
     def available_branches(self) -> list[str]:
         return ['none']
-      
-    """
-    #def forward(self, x: float) -> float:
-    #    return math.atan2(
-    #        math.sin(x) * math.cos(self.shaft_angle),
-    #        math.cos(x)
-    #    )
-    #def inverse(self, y: float, branch: Optional[str] = None, 
-    #            guess: Optional[float] = None) -> float:
 
-    #    return math.atan2(
-    #        math.sin(y) / math.cos(self.shaft_angle),
-    #        math.cos(y)
-    #    )
-      forward() and inverse() are problematic it uses atan2 which is bounded to (-π, π],
-      so as input sweeps continuously past ±π/2 the output discontinuously wraps.
-    
-      The actual Hooke's joint equation is:
-        tan(θ_out) = cos(α) * tan(θ_in)
-    
-      Atan2 is the wrong approach, only useful for quadrant-aware angle reconstruction, not for tracking a continuously varying angle.
-      The correct implementation needs to track which quadrant θ_in is in and preserve continuity using math.atan
-      
-    """
     def forward(self, x: float) -> float:
         """
         Input shaft angle (radians) -> output shaft angle (radians)
+        Stable implementation using atan2 to avoid tan(pi/2) singularity.
+        Unwraps result to match input continuity.
         """
-        # Preserve continuity — atan gives correct value in (-π/2, π/2),
-        # quadrant correction carries it through each half-period
-        n = math.floor(x / math.pi + 0.5)   # which half-period we're in
-        raw = math.atan(math.cos(self.shaft_angle) * math.tan(x))
-        return raw + n * math.pi
+        cos_alpha = math.cos(self.shaft_angle)
+        # Stable calculation: atan2(y, x) handles cos(x)=0 gracefully
+        raw = math.atan2(cos_alpha * math.sin(x), math.cos(x))
         
+        # Unwrap to match input x continuity (preserve rotation count)
+        # We expect output to be roughly close to input (scaled ~1.0)
+        two_pi = 2 * math.pi
+        k = round((x - raw) / two_pi)
+        return raw + k * two_pi
+
     def inverse(self, y: float, branch: Optional[str] = None,
                 guess: Optional[float] = None) -> float:
         """
         Output shaft angle (radians) -> input shaft angle (radians)
         Inverse form: tan(θ_in) = tan(θ_out) / cos(α)
-        
-        branch and guess are ignored (included for protocol compatibility)
         """
-        n = math.floor(y / math.pi + 0.5)
-        raw = math.atan(math.tan(y) / math.cos(self.shaft_angle))
-        return raw + n * math.pi
+        cos_alpha = math.cos(self.shaft_angle)
+        if abs(cos_alpha) < MechanicalLimits.TOLERANCE:
+            raise ValueError("Joint near lock-up (alpha ~ 90 deg)")
+            
+        # Stable calculation
+        raw = math.atan2(math.sin(y) / cos_alpha, math.cos(y))
+        
+        # Unwrap to match output y continuity
+        two_pi = 2 * math.pi
+        k = round((y - raw) / two_pi)
+        return raw + k * two_pi
 
     def derivative(self, x: float) -> float:
         """
         Derivative of output angle with respect to input angle.
-        This is the angular velocity ratio.
+        Angular velocity ratio.
         """
         cos_x = math.cos(x)
         sin_x = math.sin(x)
         cos_alpha = math.cos(self.shaft_angle)
         denom = cos_x**2 + (sin_x * cos_alpha)**2
+        # Avoid division by zero
+        if abs(denom) < MechanicalLimits.TOLERANCE:
+            return 0.0
         return cos_alpha / denom
 
     def angular_velocity_ratio(self, x: float) -> float:
-        """
-        ω_out / ω_in at given input angle
-        Exposes velocity fluctuation — characteristic of Hooke's joints
-        Not part of encode/decode protocol
-        """
-        cos_x = math.cos(x)
-        sin_x = math.sin(x)
-        denom = cos_x**2 + (sin_x * math.cos(self.shaft_angle))**2
-        return math.cos(self.shaft_angle) / denom
+        """ω_out / ω_in at given input angle"""
+        return self.derivative(x)
 
     def period(self) -> float:
         return 2 * math.pi
