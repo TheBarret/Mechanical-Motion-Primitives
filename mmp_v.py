@@ -482,7 +482,7 @@ if __name__ == "__main__":
     # Chain visualization
     wrist = (ChainBuilder()
         .add(SpurGear, ratio=2.5)
-        .add(HookesJoint, shaft_angle=0.3)
+        .add(HookesJoint, shaft_angle=0.05)
         .add(RackAndPinion, pitch_radius=0.1)
         .build())
     
