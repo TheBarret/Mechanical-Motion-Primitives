@@ -10,7 +10,7 @@ from typing import Callable
 from typing import Type, Dict, Any, List, Tuple, Optional, Set
 from dataclasses import dataclass, field
 
-from mmpv3 import *
+from mmp import *
 
 # ============================================================================
 # Genome Foundation
