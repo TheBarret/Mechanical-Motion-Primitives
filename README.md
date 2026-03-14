@@ -1,5 +1,7 @@
 # Mechanical Motion Primitives (MMP)
 
+![analyser](analyser.png)
+
 Mechanical-to-mathematical mappings for modeling transmission chains as composable, typed, domain-aware functions.  
 Each mechanism expresses a forward() mapping with a declared physical domain, unit type, and where mechanically valid,  
 an inverse() and derivative().  Primitives compose into chains that validate unit compatibility at construction time, treating mechanical motion the same way a compiler treats types.  
@@ -8,8 +10,6 @@ an inverse() and derivative().  Primitives compose into chains that validate uni
 This project was extensively developed and prototyped with DeepSeek, Qwen, and Claude working as one team.  
 Architecture decisions, bug hunting, domain modeling, and code review were all collaborative.  
 The Governor domain fix, adapter design, builder immutability contracts, and pytest layout resolution all came out of those sessions.  
-    
-
 
 ```    
 # Project Structure
