@@ -5,7 +5,7 @@ Test suite for Mechanical Motion Primitives Class II
 
 import pytest
 import math
-from mmpv3 import *
+from mmp import *
 
 
 # ============================================================================
