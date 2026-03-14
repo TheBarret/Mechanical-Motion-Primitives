@@ -5,7 +5,7 @@ Test suite for Mechanical Motion Primitives Class I
 
 import pytest
 import math
-from mmp import *
+from mmpv3 import *
 
 # ============================================================================
 # Test Domain and Dimension
@@ -284,14 +284,24 @@ class TestGovernor:
         assert gov.forward(-2.0) == -5.0  # 3*(-2) = -6 → clamped to -5
     
     def test_domain_reflects_clamp(self):
-        """Governor domain matches clamp range"""
+        """Governor domain matches clamp range — output bounds only, input unbounded"""
         g = SpurGear(3.0)
         gov = Governor(g, min_val=-5.0, max_val=5.0)
         
-        assert gov.domain.min == -5.0
-        assert gov.domain.max == 5.0
+        # Input is NOT constrained — motor can turn freely
+        assert gov.domain.min is None
+        assert gov.domain.max is None
+        
+        # Output IS constrained — governor clips what comes out
+        assert gov.domain.output_min == -5.0
+        assert gov.domain.output_max == 5.0
+        
+        # Units pass through unchanged
         assert gov.domain.input_unit == Dimension.ANGLE
         assert gov.domain.output_unit == Dimension.ANGLE
+        
+        # Governor makes chain non-invertible
+        assert gov.is_invertible == False
     
     def test_no_inverse_method(self):
         """Governor should NOT have an inverse method - it's OneWay"""
@@ -440,5 +450,4 @@ def test_encoding_vs_hashing_distinction():
 # ============================================================================
 
 if __name__ == "__main__":
-
     pytest.main([__file__, "-v"])

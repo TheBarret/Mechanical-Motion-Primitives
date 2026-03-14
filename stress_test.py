@@ -48,7 +48,7 @@ class FaultDetector:
         """
         try:
             # Try to build - this might raise CompositionError
-            builder = ChainBuilder()
+            builder = ICBuilder()
             for cls, kwargs in genome:
                 builder = builder.add(cls, **kwargs)
             chain = builder.build()
@@ -185,7 +185,7 @@ class CoverageTracker:
             
         # Dimension paths (build a dummy instance to get domains)
         try:
-            builder = ChainBuilder()
+            builder = ICBuilder()
             for cls, kwargs in genome:
                 builder = builder.add(cls, **kwargs)
             chain = builder.build()
@@ -388,7 +388,7 @@ def test_hypothesis(h: Dict) -> Dict[str, Any]:
     
     try:
         # Build chain
-        builder = ChainBuilder()
+        builder = ICBuilder()
         for cls, kwargs in genome:
             builder = builder.add(cls, **kwargs)
         
@@ -653,7 +653,7 @@ HYPOTHESES = [
             (Wedge, {'angle_rad': 0.3})   # expects LENGTH
         ],
         'test_inputs': [1.0],
-        'expect': "ChainBuilder.add() raises DimensionMismatchError"
+        'expect': "ICBuilder.add() raises DimensionMismatchError"
     },
 
     # ========================================================================
@@ -787,7 +787,7 @@ HYPOTHESES = [
         'name': "Empty chain handling",
         'genome': [],
         'test_inputs': [1.0],
-        'expect': "ChainBuilder.build() raises ValueError on empty chain"
+        'expect': "ICBuilder.build() raises ValueError on empty chain"
     },
     {
         'name': "Single primitive chain",
@@ -859,10 +859,24 @@ def _random_params(cls: Type[Primitive]) -> Dict[str, Any]:
             # Otherwise skip — let __post_init__ use its own defaults
     
     return params
-
-def run_all():
-    print("Stress Test")
+def run_first_phase():
+    print("="*60)
+    print("Stress Test I")
+    
+    # First, hunt for random faults
+    PRIMITIVE_POOL = [
+        SpurGear, RackAndPinion, Wedge, HookesJoint,
+        ScotchYoke, EccentricCam, CrankSlider, OldhamCoupling
+    ]
+    faults = hunt_for_faults(
+        primitive_pool=PRIMITIVE_POOL,
+        generations=500,
+        pop_size=100
+    )
+    
+def run_second_phase():
     print("=" * 60)
+    print("Stress Test II")
     
     passed = 0
     for h in HYPOTHESES:
@@ -889,23 +903,5 @@ def numerical_derivative(f: Callable[[float], float], x: float, h: float = 1e-6)
 
 
 if __name__ == "__main__":
-    print("Stress Tester")
-    print("="*60)
-    
-    # First, hunt for random faults
-    PRIMITIVE_POOL = [
-        SpurGear, RackAndPinion, Wedge, HookesJoint,
-        ScotchYoke, EccentricCam, CrankSlider, OldhamCoupling
-    ]
-    
-    print("Testing...")
-    faults = hunt_for_faults(
-        primitive_pool=PRIMITIVE_POOL,
-        generations=500,
-        pop_size=100
-    )
-    
-    # Then run hypothesis tests
-    print("\n" + "="*60)
-    print("Running hypothesis tests...")
-    run_all()
+    #run_first_phase()
+    run_second_phase()

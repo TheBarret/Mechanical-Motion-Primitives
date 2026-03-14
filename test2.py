@@ -5,7 +5,7 @@ Test suite for Mechanical Motion Primitives Class II
 
 import pytest
 import math
-from mmp import *
+from mmpv3 import *
 
 
 # ============================================================================
@@ -23,8 +23,12 @@ class TestScotchYoke:
         assert y.is_analytically_invertible is True
         assert y.domain.input_unit == Dimension.ANGLE
         assert y.domain.output_unit == Dimension.LENGTH
-        assert y.domain.min == -2.0
-        assert y.domain.max == 2.0
+        # Input domain is unbounded
+        assert y.domain.min is None
+        assert y.domain.max is None
+        # Output bounds are in output_min/output_max
+        assert y.domain.output_min == -2.0
+        assert y.domain.output_max == 2.0
 
     def test_zero_amplitude_raises(self):
         """Amplitude cannot be zero"""
@@ -102,7 +106,7 @@ class TestScotchYoke:
     def test_inverse_out_of_range_raises(self):
         """Inverse fails for |y| > amplitude"""
         y = ScotchYoke(amplitude=2.0)
-        with pytest.raises(ValueError, match="outside amplitude range"):
+        with pytest.raises(ValueError, match="outside amplitude range|outside output range"):
             y.inverse(3.0)
 
     def test_period(self):
@@ -146,8 +150,12 @@ class TestEccentricCam:
         assert c.is_analytically_invertible is False
         assert c.domain.input_unit == Dimension.ANGLE
         assert c.domain.output_unit == Dimension.LENGTH
-        assert c.domain.min == 4.0  # r - e
-        assert c.domain.max == 6.0  # r + e
+        # Input domain is unbounded
+        assert c.domain.min is None
+        assert c.domain.max is None
+        # Output bounds in output_min/output_max
+        assert c.domain.output_min == 4.0  # r - e
+        assert c.domain.output_max == 6.0  # r + e
 
     def test_eccentricity_zero_raises(self):
         """Eccentricity must be positive"""
@@ -171,13 +179,13 @@ class TestEccentricCam:
         # θ = 0: e*1 + sqrt(25 - 0) = 1 + 5 = 6
         assert c.forward(0.0) == pytest.approx(6.0)
         
-        # θ = π/2: e*0 + sqrt(25 - 1) = 0 + sqrt(24) ≈ 4.8989
+        # θ = π/2: e*0 + sqrt(25 - 1) = 0 + sqrt(24) ≈ 4.898979
         assert c.forward(math.pi/2) == pytest.approx(4.898979, rel=1e-5)
         
         # θ = π: e*(-1) + sqrt(25 - 0) = -1 + 5 = 4
         assert c.forward(math.pi) == pytest.approx(4.0)
         
-        # θ = 3π/2: e*0 + sqrt(25 - 1) = 0 + sqrt(24) ≈ 4.8989
+        # θ = 3π/2: e*0 + sqrt(25 - 1) = 0 + sqrt(24) ≈ 4.898979
         assert c.forward(3*math.pi/2) == pytest.approx(4.898979, rel=1e-5)
 
     def test_derivative(self):
@@ -236,10 +244,10 @@ class TestEccentricCam:
         c = EccentricCam(eccentricity=1.0, follower_radius=5.0)
         
         # Should raise domain error, not convergence error
-        with pytest.raises(ValueError, match="outside domain"):
+        with pytest.raises(ValueError, match="outside output range"):
             c.inverse(10.0)  # > max (6.0)
         
-        with pytest.raises(ValueError, match="outside domain"):
+        with pytest.raises(ValueError, match="outside output range"):
             c.inverse(2.0)  # < min (4.0)
 
 
@@ -248,12 +256,12 @@ class TestEccentricCam:
         c = EccentricCam(eccentricity=1.0, follower_radius=5.0)
         
         # Maximum displacement at θ=0
-        y_max = c.domain.max  # 6.0
+        y_max = c.domain.output_max  # 6.0, not domain.max
         result = c.inverse(y_max)
         assert result == pytest.approx(0.0, abs=1e-9)
         
         # Minimum displacement at θ=π
-        y_min = c.domain.min  # 4.0
+        y_min = c.domain.output_min  # 4.0, not domain.min
         result = c.inverse(y_min)
         assert result == pytest.approx(math.pi, abs=1e-9)
 
@@ -285,8 +293,12 @@ class TestCrankSlider:
         assert cs.is_analytically_invertible is False
         assert cs.domain.input_unit == Dimension.ANGLE
         assert cs.domain.output_unit == Dimension.LENGTH
-        assert cs.domain.min == 3.0
-        assert cs.domain.max == 5.0
+        # Input domain is unbounded
+        assert cs.domain.min is None
+        assert cs.domain.max is None
+        # Output bounds in output_min/output_max
+        assert cs.domain.output_min == 3.0
+        assert cs.domain.output_max == 5.0
 
     def test_crank_length_zero_raises(self):
         """Crank length must be positive"""
@@ -350,21 +362,21 @@ class TestCrankSlider:
         cs = CrankSlider(crank_length=1.0, rod_length=4.0)
 
         # Maximum displacement at θ=0
-        result = cs.inverse(cs.domain.max)
+        result = cs.inverse(cs.domain.output_max)  # Use output_max, not domain.max
         assert result == pytest.approx(0.0, abs=1e-9)
 
         # Minimum displacement at θ=π
-        result = cs.inverse(cs.domain.min)
+        result = cs.inverse(cs.domain.output_min)  # Use output_min, not domain.min
         assert result == pytest.approx(math.pi, abs=1e-9)
 
     def test_inverse_out_of_domain_raises(self):
         """Inverse fails for y outside [L-r, L+r]"""
         cs = CrankSlider(crank_length=1.0, rod_length=4.0)
 
-        with pytest.raises(ValueError, match="outside domain"):
+        with pytest.raises(ValueError, match="outside output range"):
             cs.inverse(10.0)  # above max
 
-        with pytest.raises(ValueError, match="outside domain"):
+        with pytest.raises(ValueError, match="outside output range"):
             cs.inverse(1.0)   # below min
 
     def test_round_trip_all_branches(self):
@@ -474,8 +486,6 @@ class TestHookesJoint:
         assert h.angular_velocity_ratio(0.0) == pytest.approx(math.cos(math.pi/6))
         
         # At some angles, ratio > 1 (output speeds up)
-        #ratio_at_45 = h.angular_velocity_ratio(math.pi/4)
-        #assert ratio_at_45 > 1.0  # Hooke joint fluctuates
         ratio_near_singularity = h.angular_velocity_ratio(math.pi/3)  # 60°
         assert ratio_near_singularity > 1.0
 
@@ -545,20 +555,26 @@ def test_periodic_bijective_protocol():
 def test_class2_domains():
     """All Class II primitives have correct domain bounds"""
     
-    # ScotchYoke domain = [-A, A]
+    # ScotchYoke input domain unbounded, output bounded
     y = ScotchYoke(amplitude=2.5)
-    assert y.domain.min == -2.5
-    assert y.domain.max == 2.5
+    assert y.domain.min is None
+    assert y.domain.max is None
+    assert y.domain.output_min == -2.5
+    assert y.domain.output_max == 2.5
     
-    # EccentricCam domain = [r-e, r+e]
+    # EccentricCam input domain unbounded, output bounded
     c = EccentricCam(eccentricity=2.0, follower_radius=5.0)
-    assert c.domain.min == 3.0
-    assert c.domain.max == 7.0
+    assert c.domain.min is None
+    assert c.domain.max is None
+    assert c.domain.output_min == 3.0
+    assert c.domain.output_max == 7.0
     
-    # CrankSlider domain = [L-r, L+r]
+    # CrankSlider input domain unbounded, output bounded
     cs = CrankSlider(crank_length=1.5, rod_length=5.0)
-    assert cs.domain.min == 3.5
-    assert cs.domain.max == 6.5
+    assert cs.domain.min is None
+    assert cs.domain.max is None
+    assert cs.domain.output_min == 3.5
+    assert cs.domain.output_max == 6.5
     
     # HookesJoint domain is unbounded (angles)
     h = HookesJoint(shaft_angle=math.pi/6)
@@ -571,5 +587,4 @@ def test_class2_domains():
 # ============================================================================
 
 if __name__ == "__main__":
-
     pytest.main([__file__, "-v"])
