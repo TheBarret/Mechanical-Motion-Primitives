@@ -42,7 +42,7 @@ import math
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Dict
 
-from mmpv3 import (
+from mmp import (
     CompositePrimitive, Primitive, Dimension, Domain,
     Invertible, Periodic, PeriodicBijective, PeriodicBranchDependent,
     Governor,
