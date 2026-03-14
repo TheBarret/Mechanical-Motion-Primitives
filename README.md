@@ -51,9 +51,10 @@ For monotonic invertible prefix chains this is exact; for non-monotonic stages i
 - `InverseUndefinedError` 
    Calling inverse() on a non-invertible or Governor-containing chain 
 
-## Composition & Example
+## Chain Composition
 
-Chains are built with ChainBuilder and are immutable once constructed. Validation happens at build time. 
+There are two types of chain builders, both reflect real vs unreal.
+`ICBuilder` and `CCBuilder` both immutable and only once constructed, validation happens at build time. 
 
 ```py
 import math
@@ -61,7 +62,7 @@ import numpy as np
 from mmp import *
 
 if __name__ == "__main__":
-    wrist = (CCBuilder()
+    wrist = (ICBuilder()
         .add(SpurGear, ratio=2.5)
         .add(HookesJoint, shaft_angle=0.05)
         .add(RackAndPinion, pitch_radius=0.1)
@@ -80,10 +81,60 @@ if __name__ == "__main__":
     wrist_actuator.input_domain.contains(theta) # back-propagated from Governor bounds
 ```
 
-### Behavior
-The chain enforces unit compatibility at every junction. 
+### CCBuilder vs ICBuilder Behavior
+
+The `ICBuilder` chain enforces unit compatibility at every junction. 
 
 - Connecting a SpurGear `(ANGLE output)` 
 - Directly to a Wedge `(LENGTH input)` 
  
 Raises `DimensionMismatchError` at build time, not at runtime. 
+
+The `CCBuilder` can be used the same way as `ICBuilder` but supports `adapters` chains.
+
+Chain adapters in `Class III` are 'Admissible' and 'Inadmissible' types, 
+these are "fictional" mathematical transformations that don't correspond to a single physical mechanism, 
+but allow you to compose arbitrary chains for (mathematical) exploration, carry the same unit semantics as real primitives, 
+enabling the compositor to validate dimensional flow even in fictional constructions. 
+
+Types:
+- `UnitAdapter()`: Abstract base for all dimensional adapters
+- `AngleToLength(UnitAdapter)`: Conversion from angle to length.
+- `LengthToAngle(UnitAdapter)`: Conversion from length to angle.
+- `UnitlessScaling(UnitAdapter)`: Scaling that preserves units.
+- `Bias(UnitAdapter)`: Add a constant offset while preserving units.
+- `FunctionAdapter(UnitAdapter)`: Arbitrary mathematical function with known inverse.
+
+Example:
+
+```py
+experiment = (CCBuilder()
+    .add(SpurGear, ratio=2.5)                          # Current unit: ANGLE
+    .add(RackAndPinion, pitch_radius=0.1)              # Current unit: LENGTH
+    .add_adapter(to_unit=Dimension.ANGLE, scale=10.0)  # LENGTH → ANGLE  (Inadmissible)
+    .add(HookesJoint, shaft_angle=0.3)                 # Current unit: ANGLE again
+    .build())
+```
+
+Output:
+```
+* Testing illegal actuator *
+-> chain.forward(1.5)
+    -> Motor at 1.5rad → Actuator at 3.729m
+-> chain.inverse(1.2)
+    Need 1.2m → Motor at 0.486rad
+At 10.0 rad/s motor speed → Actuator moves at 24.585 m/s
+-> chain.forward(0.5)
+  θ=0.5rad → valid, position=1.236m
+-> chain.forward(1.0)
+  θ=1.0rad → valid, position=2.522m
+-> chain.forward(1.5)
+  θ=1.5rad → valid, position=3.729m
+-> chain.forward(2.0)
+  θ=2.0rad → valid, position=5.013m
+-> chain.forward(2.5)
+  θ=2.5rad → valid, position=6.251m
+```
+
+
+## EOF
