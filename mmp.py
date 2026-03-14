@@ -3,6 +3,7 @@ from __future__ import annotations
 Mechanical Motion Primitives
 Behavioral classification-based implementation of mechanical-to-mathematical mappings
 env: Python 3.10.10
+
 """
 
 import math
@@ -41,21 +42,60 @@ class Domain:
     MechanicalLimits are compositor-level warnings, not primitive-level walls.
 
     input_unit / output_unit carry physical dimension for compatibility checks.
+
+    min / max         — valid INPUT range for this primitive (None = unbounded).
+    output_min / max  — achievable OUTPUT range (None = unbounded / same as input).
+    Periodic primitives (ScotchYoke, CrankSlider, EccentricCam) accept any input
+    angle but produce bounded output — they set min/max=None and declare output bounds
+    via output_min/output_max.  _compute_output_domain and _input_feasible use only
+    min/max for input gating; output clamping uses output_min/output_max.
     """
     min:         Optional[float] = None
     max:         Optional[float] = None
     input_unit:  Dimension       = Dimension.GENERIC
     output_unit: Dimension       = Dimension.GENERIC
+    output_min:  Optional[float] = None   # Achievable output lower bound
+    output_max:  Optional[float] = None   # Achievable output upper bound
 
     def contains(self, x: float, tolerance: float = 1e-9) -> bool:
+        """Check whether x lies within the INPUT domain."""
         if self.min is not None and x < self.min - tolerance:
             return False
         if self.max is not None and x > self.max + tolerance:
             return False
         return True
+    
+    def output_contains(self, y: float, tolerance: float = 1e-9) -> bool:
+        """
+        Check whether y lies within the achievable OUTPUT range.
+        Falls back to input bounds (min/max) when output_min/output_max are not set,
+        preserving backwards-compatible behaviour for linear primitives where input
+        and output share the same unbounded nature.
+        """
+        # Handle None input - this should never happen in normal use,
+        # but protects against tests and edge cases
+        if y is None:
+            return False
+            
+        lo = self.output_min if self.output_min is not None else self.min
+        hi = self.output_max if self.output_max is not None else self.max
+        
+        # Safe comparisons with None
+        if lo is not None and y < lo - tolerance:
+            return False
+        if hi is not None and y > hi + tolerance:
+            return False
+        return True
 
     def is_finite(self) -> bool:
+        """Input domain is fully bounded."""
         return self.min is not None and self.max is not None
+
+    def output_is_finite(self) -> bool:
+        """Output range is fully bounded."""
+        lo = self.output_min if self.output_min is not None else self.min
+        hi = self.output_max if self.output_max is not None else self.max
+        return lo is not None and hi is not None
 
 """
 ============================================================================
@@ -280,19 +320,46 @@ class CompositePrimitive:
         for i, p in enumerate(reversed(self.primitives)):
             deriv *= p.derivative(intermediates[-(i+1)])
         return deriv
-
+    
     def inverse(self, y: float, branches: Optional[list[str]] = None, guesses: Optional[list[float]] = None) -> float:
         """
         Inverse with per-stage branch context.
+
+        Guards:
+        1. Chain must be invertible.
+        2. y must lie within the chain's achievable output range — checked via
+           _output_domain.output_contains().  Calling inverse() with a y outside
+           that range is physically meaningless and would produce silent garbage.
         """
+    
         if not self.is_invertible:
             raise InverseUndefinedError("Chain is not invertible")
+
+        # Add small epsilon tolerance for boundary cases
+        if not self._output_domain.output_contains(y, tolerance=1e-6):
+            # Check if we're extremely close to boundary
+            out_min = self._output_domain.output_min
+            out_max = self._output_domain.output_max
+            if out_min is not None and abs(y - out_min) < 1e-10:
+                y = out_min
+            elif out_max is not None and abs(y - out_max) < 1e-10:
+                y = out_max
+            else:
+                raise DomainViolationError(
+                    f"y={y} is outside the chain's achievable output range "
+                    f"[{out_min}, {out_max}]"
+                )
+            
         result = y
-        # Iterate backwards through primitives
+        # Iterate backwards through primitives.
+        # idx counts forward (0…N-1) so that branches/guesses lists are indexed
+        # in the same forward order the caller naturally thinks about them.
+        # NOTE: do NOT substitute i for idx here — i counts the reversed iteration
+        #       (0 = last primitive), which is the opposite of the caller's mental model.
         for i, p in enumerate(reversed(self.primitives)):
             idx = len(self.primitives) - 1 - i
             branch = branches[idx] if branches and idx < len(branches) else None
-            guess = guesses[idx] if guesses and idx < len(guesses) else None
+            guess  = guesses[idx]  if guesses  and idx < len(guesses)  else None
             if hasattr(p, 'inverse'):
                 result = p.inverse(result, branch=branch, guess=guess)
             else:
@@ -328,7 +395,14 @@ class CompositePrimitive:
     def _compute_input_domain(self) -> Domain:
         """
         Back-propagate constraints to find valid input range.
-        FIX 2: Checks is_monotonic before analytic inversion.
+        Checks is_monotonic before analytic inversion (invertible != monotonic).
+
+        Bounded periodic primitives (ScotchYoke, CrankSlider, EccentricCam) declare
+        domain.min/max=None (unbounded input) but set domain.output_min/output_max.
+        We must not skip those stages — their output bounds constrain which input
+        values are useful.  The analytic path uses output_min/output_max as the
+        bounds to back-propagate; the sampling path falls through naturally since
+        domain.contains() on an unbounded-input primitive always returns True.
         """
         if not self.primitives:
             return Domain(input_unit=Dimension.GENERIC, output_unit=Dimension.GENERIC)
@@ -337,21 +411,28 @@ class CompositePrimitive:
         current_max = self.primitives[0].domain.max
 
         for i, p in enumerate(self.primitives[1:], start=1):
-            if p.domain.min is None and p.domain.max is None:
+            # Determine effective output bounds for this primitive.
+            # Prefer explicit output_min/output_max; fall back to domain.min/max
+            # for primitives that don't separate the two (linear primitives).
+            p_out_lo = p.domain.output_min if p.domain.output_min is not None else p.domain.min
+            p_out_hi = p.domain.output_max if p.domain.output_max is not None else p.domain.max
+
+            # Skip primitives with no output constraints — they don't narrow the domain.
+            if p_out_lo is None and p_out_hi is None:
                 continue
             
             prefix = self.primitives[:i]
             
-            # FIX: Check monotonicity. Invertible != Monotonic (e.g. ScotchYoke)
+            # Check monotonicity. Invertible != Monotonic (e.g. ScotchYoke)
             all_invertible = all(getattr(pp, 'is_invertible', False) for pp in prefix)
-            all_monotonic = all(getattr(pp, 'is_monotonic', False) for pp in prefix)
+            all_monotonic  = all(getattr(pp, 'is_monotonic',  False) for pp in prefix)
 
             constraints = []
-            # Only use analytic inversion if chain is BOTH invertible AND monotonic
+            # Only use analytic inversion if the prefix chain is BOTH invertible AND monotonic
             if all_invertible and all_monotonic:
-                if p.domain.min is not None:
+                if p_out_lo is not None:
                     try:
-                        y = p.domain.min
+                        y = p_out_lo
                         for pp in reversed(prefix):
                             if hasattr(pp, 'inverse'):
                                 y = pp.inverse(y)
@@ -360,9 +441,9 @@ class CompositePrimitive:
                         constraints.append(y)
                     except Exception:
                         pass
-                if p.domain.max is not None:
+                if p_out_hi is not None:
                     try:
-                        y = p.domain.max
+                        y = p_out_hi
                         for pp in reversed(prefix):
                             if hasattr(pp, 'inverse'):
                                 y = pp.inverse(y)
@@ -372,7 +453,11 @@ class CompositePrimitive:
                     except Exception:
                         pass
             
-            # If analytic failed or not monotonic, force sampling
+            # If analytic failed or prefix is not monotonic, use sampling.
+            # domain.contains(val) checks the INPUT bounds of p — for bounded periodic
+            # primitives this is always True (min/max=None), which is correct: any
+            # angle is a valid input to sin/cos.  The output-range filter is implicit
+            # in the forward pass values we observe.
             if not constraints:
                 sample_points = self._generate_sample_points(current_min, current_max)
                 feasible_inputs = []
@@ -389,7 +474,7 @@ class CompositePrimitive:
                 if feasible_inputs:
                     constraints = [min(feasible_inputs), max(feasible_inputs)]
                 else:
-                    # No feasible inputs
+                    # No feasible inputs — chain is geometrically impossible
                     return Domain(min=float('inf'), max=-float('inf'),
                                   input_unit=self.primitives[0].domain.input_unit,
                                   output_unit=self.primitives[0].domain.output_unit)
@@ -451,16 +536,33 @@ class CompositePrimitive:
                                       input_unit=self.primitives[0].domain.input_unit,
                                       output_unit=self.primitives[-1].domain.output_unit)
             except Exception:
-                if p.domain.min is not None:
-                    current_min = max(current_min, p.domain.min) if current_min is not None else p.domain.min
-                if p.domain.max is not None:
-                    current_max = min(current_max, p.domain.max) if current_max is not None else p.domain.max
+                # Fallback: clamp to this primitive's declared output range if available,
+                # otherwise try its input domain bounds.
+                p_out_lo = p.domain.output_min if p.domain.output_min is not None else p.domain.min
+                p_out_hi = p.domain.output_max if p.domain.output_max is not None else p.domain.max
+                if p_out_lo is not None:
+                    current_min = max(current_min, p_out_lo) if current_min is not None else p_out_lo
+                if p_out_hi is not None:
+                    current_max = min(current_max, p_out_hi) if current_max is not None else p_out_hi
 
+        # Final clamp to last primitive's declared output range.
+        # Use output_min/output_max when set (bounded periodic primitives);
+        # fall back to domain.min/max for primitives that don't separate the two.
+        #
+        # Semantics: the declared bounds are exact (analytic), sampling is approximate.
+        # For the lower bound we take the MINIMUM of the two (declared is tighter/exact).
+        # For the upper bound we take the MAXIMUM of the two.
+        # This ensures the guard in inverse() never rejects a mathematically valid y
+        # that sampling happened to miss.
         last = self.primitives[-1]
-        if last.domain.min is not None:
-            current_min = max(current_min, last.domain.min) if current_min is not None else last.domain.min
-        if last.domain.max is not None:
-            current_max = min(current_max, last.domain.max) if current_max is not None else last.domain.max
+        last_out_lo = last.domain.output_min if last.domain.output_min is not None else last.domain.min
+        last_out_hi = last.domain.output_max if last.domain.output_max is not None else last.domain.max
+        if last_out_lo is not None:
+            # Declared lower bound wins if it is tighter (smaller) than sampled
+            current_min = min(current_min, last_out_lo) if current_min is not None else last_out_lo
+        if last_out_hi is not None:
+            # Declared upper bound wins if it is tighter (larger) than sampled
+            current_max = max(current_max, last_out_hi) if current_max is not None else last_out_hi
 
         if current_min is not None and current_max is not None:
             if current_min > current_max + MechanicalLimits.TOLERANCE:
@@ -468,15 +570,29 @@ class CompositePrimitive:
                               input_unit=self.primitives[0].domain.input_unit,
                               output_unit=self.primitives[-1].domain.output_unit)
 
+        out_lo = None if current_min in (None, float('inf'), -float('inf')) else current_min
+        out_hi = None if current_max in (None, float('inf'), -float('inf')) else current_max
         return Domain(
-            min=None if current_min in (None, float('inf'), -float('inf')) else current_min,
-            max=None if current_max in (None, float('inf'), -float('inf')) else current_max,
+            min=None,
+            max=None,
             input_unit=self.primitives[0].domain.input_unit,
-            output_unit=self.primitives[-1].domain.output_unit
+            output_unit=self.primitives[-1].domain.output_unit,
+            output_min=out_lo,
+            output_max=out_hi,
         )
 
     def _input_feasible(self, x: float, up_to_stage: int) -> bool:
-        """Check if input x produces valid intermediate values for all stages up to up_to_stage."""
+        """
+        Check whether input x produces values that fall within each stage's
+        declared INPUT domain up to and including up_to_stage.
+
+        domain.contains() tests domain.min/max — the valid INPUT range.
+        For bounded periodic primitives (ScotchYoke, CrankSlider, EccentricCam)
+        domain.min/max are None (any angle is valid input), so this check
+        always passes for those stages, which is correct — sin/cos accept all reals.
+        Output-range gating is handled separately in _compute_output_domain via
+        output_min/output_max.
+        """
         try:
             val = x
             for i in range(up_to_stage + 1):
@@ -552,12 +668,15 @@ class Governor:
                 "Hysteresis too large — would invert the governed range "
             )
         
-        # set domain once
+        # set domain once (bounds)
+        # unbounded fallback path and substituted the mechanical limit
         self.domain = Domain(
-            min=self.min_val,
-            max=self.max_val,
+            min=None,              # ← Input is NOT constrained
+            max=None,              # ← Input is NOT constrained
             input_unit=self.primitive.domain.input_unit,
-            output_unit=self.primitive.domain.output_unit
+            output_unit=self.primitive.domain.output_unit,
+            output_min=self.min_val,  # ← Output IS constrained
+            output_max=self.max_val,  # ← Output IS constrained
         )
 
     @property
@@ -855,7 +974,7 @@ class OldhamCoupling:
     ============================================================================
 """
 
-@dataclass(frozen=True)  # IMMUTABLE
+@dataclass(frozen=True)
 class ScotchYoke:
     amplitude: float
     phase: float = 0.0
@@ -863,6 +982,7 @@ class ScotchYoke:
     theta_guess: float = 0.0
     is_analytically_invertible: bool = True
     is_monotonic: bool = False
+    domain: Domain = field(init=False)
 
     def __post_init__(self):
         if self.amplitude == 0:
@@ -871,11 +991,14 @@ class ScotchYoke:
             raise ValueError(
                 f"branch must be one of {self.available_branches} "
             )
+        # Set domain explicitly
         object.__setattr__(self, 'domain', Domain(
-            min=-abs(self.amplitude),
-            max=abs(self.amplitude),
+            min=None,
+            max=None,
             input_unit=Dimension.ANGLE,
-            output_unit=Dimension.LENGTH
+            output_unit=Dimension.LENGTH,
+            output_min=-abs(self.amplitude),
+            output_max=abs(self.amplitude),
         ))
 
     @property
@@ -929,11 +1052,12 @@ class EccentricCam:
     theta_guess:     float = 0.0
     is_analytically_invertible: bool = False
     is_monotonic: bool = False
+    domain: Domain = field(init=False)
 
     def __post_init__(self):
-        if self.eccentricity  <= 0:
+        if self.eccentricity <= 0:
             raise ValueError("Eccentricity must be positive ")
-        if self.follower_radius  <= self.eccentricity:
+        if self.follower_radius <= self.eccentricity:
             raise ValueError(
                 "Follower radius must exceed eccentricity —  "
                 "otherwise cam exceeds follower range "
@@ -942,11 +1066,14 @@ class EccentricCam:
             raise ValueError(
                 f"branch must be one of {self.available_branches} "
             )
+        # Set domain explicitly
         self.domain = Domain(
-            min=self.follower_radius - self.eccentricity,
-            max=self.follower_radius + self.eccentricity,
+            min=None,
+            max=None,
             input_unit=Dimension.ANGLE,
-            output_unit=Dimension.LENGTH
+            output_unit=Dimension.LENGTH,
+            output_min=self.follower_radius - self.eccentricity,
+            output_max=self.follower_radius + self.eccentricity,
         )
 
     @property
@@ -986,17 +1113,21 @@ class EccentricCam:
         active_branch = branch if branch is not None else self.branch
         active_guess = guess if guess is not None else self.theta_guess
 
-        # 1. Domain check FIRST — before any math
-        if not self.domain.contains(y):
+        # 1. Domain check FIRST — before any math.
+        #    Use output_min/output_max (the bounded output range), not domain.min/max
+        #    (which are now None — the input angle is unbounded).
+        out_lo = self.domain.output_min
+        out_hi = self.domain.output_max
+        if not self.domain.output_contains(y):
             raise ValueError(
-                f"y={y} outside domain [{self.domain.min}, {self.domain.max}] "
+                f"y={y} outside output range [{out_lo}, {out_hi}] "
             )
         
         # 2. Check for extrema — derivative is zero at min/max displacement
         #    At these points, only one solution exists (θ=0 or θ=π)
-        if abs(y - self.domain.max)  < MechanicalLimits.TOLERANCE:
+        if abs(y - out_hi)  < MechanicalLimits.TOLERANCE:
             return 0.0  # Maximum displacement at θ=0
-        if abs(y - self.domain.min)  < MechanicalLimits.TOLERANCE:
+        if abs(y - out_lo)  < MechanicalLimits.TOLERANCE:
             return math.pi  # Minimum displacement at θ=π
         
         # 3. Seed to correct branch region
@@ -1075,11 +1206,12 @@ class CrankSlider:
     theta_guess:  float = 0.0
     is_analytically_invertible: bool = False
     is_monotonic: bool = False
+    domain: Domain = field(init=False)
 
     def __post_init__(self):
-        if self.crank_length  <= 0:
+        if self.crank_length <= 0:
             raise ValueError("Crank length must be positive ")
-        if self.rod_length  <= self.crank_length:
+        if self.rod_length <= self.crank_length:
             raise ValueError(
                 "Rod length must exceed crank length —  "
                 "otherwise slider cannot complete full rotation "
@@ -1088,11 +1220,14 @@ class CrankSlider:
             raise ValueError(
                 f"branch must be one of {self.available_branches} "
             )
+        # Set domain explicitly
         self.domain = Domain(
-            min=self.rod_length - self.crank_length,
-            max=self.rod_length + self.crank_length,
+            min=None,
+            max=None,
             input_unit=Dimension.ANGLE,
-            output_unit=Dimension.LENGTH
+            output_unit=Dimension.LENGTH,
+            output_min=self.rod_length - self.crank_length,
+            output_max=self.rod_length + self.crank_length,
         )
 
     @property
@@ -1124,26 +1259,29 @@ class CrankSlider:
         return r * math.cos(x) + math.sqrt(L**2 - (r * math.sin(x))**2)
 
     def inverse(self, y: float, branch: Optional[str] = None, 
-                guess: Optional[float] = None) -> float:
+            guess: Optional[float] = None) -> float:
         """
         Slider position -> crank angle via Newton-Raphson.
         Uses active_branch to constrain iteration.
+
         """
+        
         active_branch = branch if branch is not None else self.branch
         active_guess = guess if guess is not None else self.theta_guess
 
-        # 1. Domain check first — before any math
-        if not self.domain.contains(y):
+        # 1. Domain check FIRST — before any math.
+        out_lo = self.domain.output_min
+        out_hi = self.domain.output_max
+        if not self.domain.output_contains(y):
             raise ValueError(
-                f"y={y} outside domain  "
-                f"[{self.domain.min}, {self.domain.max}] "
+                f"y={y} outside output range [{out_lo}, {out_hi}]"
             )
 
         # 2. Extrema bypass — derivative is zero at max/min displacement
         #    Only one solution exists at these points
-        if abs(y - self.domain.max)  < MechanicalLimits.TOLERANCE:
+        if abs(y - out_hi)  < MechanicalLimits.TOLERANCE:
             return 0.0       # Maximum displacement at θ=0
-        if abs(y - self.domain.min)  < MechanicalLimits.TOLERANCE:
+        if abs(y - out_lo)  < MechanicalLimits.TOLERANCE:
             return math.pi   # Minimum displacement at θ=π
 
         # 3. Seed to correct branch region
@@ -1298,33 +1436,247 @@ class HookesJoint:
 
 """
 ============================================================================
+CLASS VIII: Admissible / Inadmissible adapters
+
+These are "fictional" mathematical transformations that don't correspond to
+a single physical mechanism, but allow us to compose arbitrary chains
+for analysis, simulation, or mathematical exploration.
+
+They carry the same unit semantics as real primitives, enabling the
+compositor to validate dimensional flow even in fictional constructions.
+============================================================================
+"""
+
+@dataclass
+class UnitAdapter:
+    """
+    Abstract base for all dimensional adapters.
+    Not intended for direct instantiation.
+    """
+    domain: Domain = field(init=False)
+    
+    def __post_init__(self):
+        if not hasattr(self, '_input_unit') or not hasattr(self, '_output_unit'):
+            raise TypeError("UnitAdapter subclasses must set _input_unit and _output_unit")
+        
+        self.domain = Domain(
+            input_unit=self._input_unit,
+            output_unit=self._output_unit
+        )
+    
+    @property
+    def is_invertible(self) -> bool:
+        return True
+    
+    @property
+    def is_monotonic(self) -> bool:
+        return True
+    
+    @property
+    def available_branches(self) -> list[str]:
+        return ['none']
+
+
+@dataclass
+class AngleToLength(UnitAdapter):
+    """
+    Fictional: Pure mathematical conversion from angle to length.
+    Useful for constructing test chains or mathematical explorations.
+    y = scale * x
+    
+    Real-world equivalent would be RackAndPinion, but this adapter
+    makes no physical claims - it's a pure mathematical transformation.
+    """
+    scale: float = 1.0
+    _input_unit: ClassVar = Dimension.ANGLE
+    _output_unit: ClassVar = Dimension.LENGTH
+    
+    def __post_init__(self):
+        super().__post_init__()
+        if self.scale == 0:
+            raise ValueError("Scale cannot be zero")
+    
+    def forward(self, x: float) -> float:
+        return x * self.scale
+    
+    def inverse(self, y: float, branch: Optional[str] = None, 
+                guess: Optional[float] = None) -> float:
+        return y / self.scale
+    
+    def derivative(self, x: float) -> float:
+        return self.scale
+
+
+@dataclass
+class LengthToAngle(UnitAdapter):
+    """
+    Fictional: Pure mathematical conversion from length to angle.
+    The inverse of AngleToLength - useful for closing kinematic loops
+    or constructing mathematical thought experiments.
+    y = scale * x
+    """
+    scale: float = 1.0
+    _input_unit: ClassVar = Dimension.LENGTH
+    _output_unit: ClassVar = Dimension.ANGLE
+    
+    def __post_init__(self):
+        super().__post_init__()
+        if self.scale == 0:
+            raise ValueError("Scale cannot be zero")
+    
+    def forward(self, x: float) -> float:
+        return x * self.scale
+    
+    def inverse(self, y: float, branch: Optional[str] = None,
+                guess: Optional[float] = None) -> float:
+        return y / self.scale
+    
+    def derivative(self, x: float) -> float:
+        return self.scale
+
+
+@dataclass
+class UnitlessScaling(UnitAdapter):
+    """
+    Fictional: Pure scaling that preserves units.
+    Useful for mathematical transformations that don't change dimension.
+    y = scale * x
+    
+    Input and output units must match (both specified at construction).
+    """
+    scale: float = 1.0
+    unit: Dimension = Dimension.GENERIC
+    _input_unit: Dimension = field(init=False)
+    _output_unit: Dimension = field(init=False)
+    
+    def __post_init__(self):
+        self._input_unit = self.unit
+        self._output_unit = self.unit
+        super().__post_init__()
+        if self.scale == 0:
+            raise ValueError("Scale cannot be zero")
+    
+    def forward(self, x: float) -> float:
+        return x * self.scale
+    
+    def inverse(self, y: float, branch: Optional[str] = None,
+                guess: Optional[float] = None) -> float:
+        return y / self.scale
+    
+    def derivative(self, x: float) -> float:
+        return self.scale
+
+
+@dataclass
+class Bias(UnitAdapter):
+    """
+    Fictional: Add a constant offset while preserving units.
+    y = x + bias
+    
+    Useful for shifting coordinate systems or reference frames.
+    Input and output units must match.
+    """
+    bias: float = 0.0
+    unit: Dimension = Dimension.GENERIC
+    _input_unit: Dimension = field(init=False)
+    _output_unit: Dimension = field(init=False)
+    
+    def __post_init__(self):
+        self._input_unit = self.unit
+        self._output_unit = self.unit
+        super().__post_init__()
+    
+    def forward(self, x: float) -> float:
+        return x + self.bias
+    
+    def inverse(self, y: float, branch: Optional[str] = None,
+                guess: Optional[float] = None) -> float:
+        return y - self.bias
+    
+    @property
+    def is_monotonic(self) -> bool:
+        return True
+    
+    def derivative(self, x: float) -> float:
+        return 1.0
+
+
+@dataclass
+class FunctionAdapter(UnitAdapter):
+    """
+    Fictional: Arbitrary mathematical function with known inverse.
+    Allows injection of any invertible function into a chain.
+    
+    Example:
+        square = FunctionAdapter(
+            fwd=lambda x: x**2,
+            inv=lambda y: math.sqrt(y),
+            input_unit=Dimension.LENGTH,
+            output_unit=Dimension.ANGLE,
+            name="square"
+        )
+    """
+    fwd: Callable[[float], float]
+    inv: Callable[[float], float]
+    input_unit: Dimension
+    output_unit: Dimension
+    name: str = "custom"
+    deriv: Optional[Callable[[float], float]] = None
+    
+    _input_unit: Dimension = field(init=False)
+    _output_unit: Dimension = field(init=False)
+    
+    def __post_init__(self):
+        self._input_unit = self.input_unit
+        self._output_unit = self.output_unit
+        super().__post_init__()
+    
+    def forward(self, x: float) -> float:
+        return self.fwd(x)
+    
+    def inverse(self, y: float, branch: Optional[str] = None,
+                guess: Optional[float] = None) -> float:
+        return self.inv(y)
+    
+    def derivative(self, x: float) -> float:
+        if self.deriv is not None:
+            return self.deriv(x)
+        # Fallback to numerical approximation
+        h = 1e-8
+        return (self.fwd(x + h) - self.fwd(x)) / h
+    
+    @property
+    def is_analytically_invertible(self) -> bool:
+        return True
+    
+    @property
+    def is_monotonic(self) -> bool:
+        # no guarantee, assume False
+        return False
+
+"""
+============================================================================
 Immutable Chain Builder
 ============================================================================
 
 example:
 
-wrist_actuator = (ChainBuilder()
+wrist_actuator = (ICBuilder()
         .add(SpurGear, ratio=2.5)                     # Motor gearbox: 2.5x speed reduction
         .add(HookesJoint, shaft_angle=0.3)            # Angled transmission (≈17°)
         .add(RackAndPinion, pitch_radius=0.1)         # Convert rotation to linear motion
         .add_governor(min_val=-2.0, max_val=2.0)      # Safety limits: ±2cm travel
         .build()) 
-
-motor_angle = 1.5  # radians
-actuator_position = wrist_actuator.forward(motor_angle)
-
-print(f"-> wrist_actuator.forward({motor_angle})")
-print(f"    Motor at {motor_angle}rad → Actuator at {actuator_position:.3f}m")
-
 """
-class ChainBuilder:
+
+class ICBuilder:
     """
     Each operation returns a NEW builder.
     """
     def __init__(self, primitives: tuple[Primitive, ...] = ()):
         self._primitives = primitives
 
-    def add(self, primitive_class, **kwargs) -> 'ChainBuilder':
+    def add(self, primitive_class, **kwargs) -> 'ICBuilder':
         """Add a primitive, returning NEW builder"""
         new_primitive = primitive_class(**kwargs)
         
@@ -1339,10 +1691,10 @@ class ChainBuilder:
                     f"previous stage outputs {last.domain.output_unit} "
                 )
         
-        return ChainBuilder(self._primitives + (new_primitive,))
+        return ICBuilder(self._primitives + (new_primitive,))
 
     def add_governor(self, min_val: float, max_val: float, 
-                     hysteresis: float = 0.0)  -> 'ChainBuilder':
+                     hysteresis: float = 0.0)  -> 'ICBuilder':
         """Wrap last primitive in Governor"""
         if not self._primitives:
             raise ValueError("Cannot add governor to empty chain ")
@@ -1351,7 +1703,7 @@ class ChainBuilder:
         governor = Governor(last, min_val, max_val, hysteresis)
         
         # Replace last primitive with governor
-        return ChainBuilder(self._primitives[:-1] + (governor,))
+        return ICBuilder(self._primitives[:-1] + (governor,))
 
     def build(self) -> CompositePrimitive:
         """Create immutable composite"""
@@ -1359,6 +1711,94 @@ class ChainBuilder:
             raise ValueError("Cannot build empty chain ")
         return CompositePrimitive(self._primitives)
 
+    @staticmethod
+    def _units_compatible(out_unit: Dimension, in_unit: Dimension) -> bool:
+        if out_unit == Dimension.GENERIC or in_unit == Dimension.GENERIC:
+            return True
+        return out_unit == in_unit
+"""        
+============================================================================
+ Creative Chain Builder
+ Adapter support, mathematically admissible but physically inadmissible.
+============================================================================
+
+example:
+
+experiment = (CCBuilder()
+        .add(SpurGear, ratio=2.5)                           # Current unit: ANGLE
+        .add(RackAndPinion, pitch_radius=0.1)               # Current unit: LENGTH
+        .add_adapter(to_unit=Dimension.ANGLE, scale=10.0)   # LENGTH → ANGLE
+        .add(HookesJoint, shaft_angle=0.3)                  # Current unit: ANGLE again
+        .build())
+        
+"""
+class CCBuilder:
+    """
+    Creative builder with adapter convenience methods.
+    """
+    def __init__(self, primitives: tuple[Primitive, ...] = ()):
+        self._primitives = primitives
+    
+    def add(self, primitive_class, **kwargs) -> 'CCBuilder':
+        """Add a primitive, returning NEW builder"""
+        new_primitive = primitive_class(**kwargs)
+        
+        # Validate unit compatibility with last primitive
+        if self._primitives:
+            last = self._primitives[-1]
+            if not self._units_compatible(last.domain.output_unit, 
+                                          new_primitive.domain.input_unit):
+                raise DimensionMismatchError(
+                    f"Cannot add {primitive_class.__name__}: "
+                    f"expects {new_primitive.domain.input_unit} but "
+                    f"previous stage outputs {last.domain.output_unit}"
+                )
+        
+        return CCBuilder(self._primitives + (new_primitive,))
+    
+    def add_adapter(self, to_unit: Dimension, scale: float = 1.0) -> 'CCBuilder':
+        """
+        Add appropriate adapter between units.
+        Infers from_unit from the tail of the chain.
+        """
+        if not self._primitives:
+            raise ValueError("Cannot add adapter to empty chain — no from_unit to infer")
+        
+        from_unit = self._primitives[-1].domain.output_unit
+
+        if from_unit == to_unit:
+            if scale != 1.0:
+                return self.add(UnitlessScaling, scale=scale, unit=from_unit)
+            return CCBuilder(self._primitives)  # immutable copy, not self
+        
+        if from_unit == Dimension.ANGLE and to_unit == Dimension.LENGTH:
+            return self.add(AngleToLength, scale=scale)
+        
+        if from_unit == Dimension.LENGTH and to_unit == Dimension.ANGLE:
+            return self.add(LengthToAngle, scale=scale)
+        
+        raise DimensionMismatchError(
+            f"No direct adapter from {from_unit} to {to_unit}"
+        )
+    
+    def add_governor(self, min_val: float, max_val: float, 
+                     hysteresis: float = 0.0) -> 'CCBuilder':
+        """Wrap last primitive in Governor"""
+        if not self._primitives:
+            raise ValueError("Cannot add governor to empty chain")
+        
+        last = self._primitives[-1]
+        governor = Governor(last, min_val, max_val, hysteresis)
+        
+        # Replace last primitive with governor
+        return CCBuilder(self._primitives[:-1] + (governor,))
+    
+    def build(self) -> CompositePrimitive:
+        """Create immutable composite"""
+        if not self._primitives:
+            raise ValueError("Cannot build empty chain")
+        return CompositePrimitive(self._primitives)
+    
     @staticmethod
     def _units_compatible(out_unit: Dimension, in_unit: Dimension) -> bool:
         if out_unit == Dimension.GENERIC or in_unit == Dimension.GENERIC:
