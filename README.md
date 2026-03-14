@@ -2,9 +2,11 @@
 
 ![analyser](analyser.png)
 
-Mechanical-to-mathematical mappings for modeling transmission chains as composable, typed, domain-aware functions.  
-Each mechanism expresses a forward() mapping with a declared physical domain, unit type, and where mechanically valid,  
-an inverse() and derivative().  Primitives compose into chains that validate unit compatibility at construction time, treating mechanical motion the same way a compiler treats types.  
+Mechanical-to-mathematical mappings for modeling transmission chains as composable, 
+typed, domain-aware functions. Each mechanism expresses a forward() mapping with a declared physical domain, 
+unit type, and where mechanically valid, an inverse() and derivative().  
+Primitives compose into chains that validate unit compatibility at construction time, 
+treating mechanical motion the same way a compiler treats types.  
 
 # AI/LLM Use
 This project was extensively developed and prototyped with DeepSeek, Qwen, and Claude working as one team.  
