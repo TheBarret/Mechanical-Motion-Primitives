@@ -3,8 +3,9 @@
 ![analyser](analyser.png)
 
 Mechanical-to-mathematical mappings for modeling transmission chains as composable, 
-typed, domain-aware functions. Each mechanism expresses a forward() mapping with a declared physical domain, 
-unit type, and where mechanically valid, an inverse() and derivative().  
+typed, domain-aware functions. Each mechanism expresses a `forward()` mapping with a declared physical domain, 
+unit type, and where mechanically valid, an `inverse()` and `derivative()`.  
+
 Primitives compose into chains that validate unit compatibility at construction time, 
 treating mechanical motion the same way a compiler treats types.  
 
@@ -92,16 +93,17 @@ Every primitive declares a Domain: the physical envelope it accepts and produces
         output_min:   Optional[float]   # None = unbounded output
         output_max:   Optional[float]
 
-CompositePrimitive back-propagates output constraints to compute input_domain: the
-range of motor inputs that keeps every intermediate stage within its physical bounds.
-For monotonic invertible prefix chains this is exact; for non-monotonic stages it
-falls back conservatively. Non-invertible stages (Governor) are skipped during
-back-propagation as their bounds constrain output only.
+`CompositePrimitive` back-propagates output constraints to compute `input_domain`:  
+    the range of motor inputs that keeps every intermediate stage within its physical bounds.  
+  
+For monotonic invertible prefix chains this is exact;  
+    for non-monotonic stages it falls back conservatively. Non-invertible stages (Governor) are skipped during  
+    back-propagation as their bounds constrain output only.  
 
 # Governor
 
-Wraps any primitive and clamps its output to [min_val, max_val]. Inserting a Governor
-permanently sets is_invertible = False on the entire chain. Clamping is a lossy
+Wraps any primitive and clamps its output to `[min_val, max_val]`. Inserting a Governor
+permanently sets `is_invertible = False` on the entire chain. Clamping is a lossy
 operation: information destroyed at the limits cannot be recovered.
 
 Governor bounds are output constraints only. The input is unconstrained: the motor
@@ -121,7 +123,7 @@ Two builders, both immutable. Validation happens at build time, not runtime.
 ## ICBuilder - Industrial / Conservative
 
 Enforces unit compatibility at every junction. Connecting mismatched units raises
-DimensionMismatchError at build time. Only real physical primitives (Class I and II).
+`DimensionMismatchError` at build time. Only real physical primitives (Class I and II).
 
 ```
     wrist = (ICBuilder()
@@ -139,8 +141,8 @@ DimensionMismatchError at build time. Only real physical primitives (Class I and
 
 ## CCBuilder - Creative / Experimental
 
-Supports all ICBuilder operations and additionally accepts Class III adapters.
-add_adapter() infers from_unit from the chain tail; only to_unit is required.
+Supports all `ICBuilder` operations and additionally accepts Class III adapters.
+`add_adapter()` infers `from_unit` from the chain tail; only to_unit is required.
 
 ```
     experiment = (CCBuilder()
@@ -153,9 +155,7 @@ add_adapter() infers from_unit from the chain tail; only to_unit is required.
 
 # Diagnostic Viewer
 
-
-
-analyser.py provides an oscilloscope-style visual probe for any CompositePrimitive.
+`analyser.py` provides an oscilloscope-style visual probe for any `CompositePrimitive`.
 One channel per primitive stage. Shared x-axis is root theta. Traces show output,
 input feed-through, and derivative as a function of root theta. Governor clamp lines,
 stage unit connectors, and per-stage cursor readout are included.
