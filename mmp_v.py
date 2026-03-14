@@ -6,7 +6,7 @@ import math
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Optional, List, Tuple, Union
-from mmpv3 import *
+from mmp import *
 
 #============================================================================
 #DIMENSION LABELS — Human-readable axis labels
